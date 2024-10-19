@@ -1,4 +1,6 @@
+#define GLEW_STATIC
 #include "Core/Core.h"
+#include "../Sphere.h"
 #include <GL/glew.h>
 #include <GLFW/glfw3.h> 
 #include <glm/glm.hpp>
@@ -30,7 +32,6 @@ float fov = 45.0f;
 
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
-
 
 int main()
 {
@@ -82,7 +83,6 @@ int main()
 	const char* vertexShaderSource = R"(
 		#version 330 core
 		layout (location = 0) in vec3 aPos;
-		layout (location = 1) in vec3 aColor;
 
 		out vec3 outColor;
 
@@ -90,19 +90,38 @@ int main()
 		uniform mat4 view;
 		uniform mat4 projection;	
 
+		uniform vec3 center;
+		uniform vec3 scale;
+		uniform vec4 rotation;
+
+		out vec3 fragPos;
+
+		vec3 applyQuaternion(vec3 v, vec4 q) {
+			return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
+		};
+
 		void main() {
-			gl_Position = projection * view * model * vec4(aPos, 1.0);
-			outColor = aColor;
+			vec3 scaledPos = scale * aPos;
+			vec3 rotatedPos = applyQuaternion(scaledPos, rotation);
+			vec3 finalPos = rotatedPos + center;
+			gl_Position = projection * view * model * vec4(finalPos, 1.0);
+			fragPos = scaledPos;
 		}
 	)";
 
 	const char* fragmentShaderSource = R"(
 		#version 330 core
-		in vec3 outColor;
+		in vec3 fragPos;
 		out vec4 FragColor;
 
+		uniform float opacity;
+		uniform vec3 color;
+		uniform vec3 spHarmonics;
+
 		void main() {
-			FragColor = vec4(outColor, 1.0f);
+			float gaussianValue = exp(-dot(fragPos, fragPos));
+			vec3 harmonicsColor = color + spHarmonics * gaussianValue;
+			FragColor = vec4(harmonicsColor, opacity * gaussianValue);
 		}
 	)";
 
@@ -136,6 +155,14 @@ int main()
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
 
+	// Temp gaussian parameters
+	glm::vec3 center = glm::vec3(-0.20695215f, -0.07309745, -0.032607663);
+	glm::vec3 scales = glm::vec3(-4.38290596f, -5.57705736f, -5.53777361f);
+	glm::quat rotation = glm::quat(0.93376312f, 0.02444352f, 0.3460566f, 0.08794192f);
+	glm::vec3 spHarmonic = glm::vec3(0.25771704f, 0.25211358f, 0.24187477f);
+	glm::vec3 color = glm::vec3(1.0f, 0.2f, 0.5f);
+	float opacity = -1.3434249f;
+
 	float vertices[] = {
 		0.5f, 0.5f, 0.0f, // top right
 		0.5f, -0.5f, 0.0f, // bottom right
@@ -145,6 +172,18 @@ int main()
 	unsigned int indices[] = {
 		0, 1, 3, // first triangle
 		1, 2, 3 // second triangle
+	};
+
+	float quadVertices[] = {
+		-1.0f, -1.0f, 0.0f,
+		1.0f, -1.0f, 0.0f,
+		1.0f, 1.0f, 0.0f,
+		-1.0f, 1.0f, 0.0f
+	};
+
+	unsigned int quadIndices[] = {
+		0, 1, 2,
+		2, 3, 0
 	};
 
 	float boxVertices[] = {
@@ -237,39 +276,42 @@ int main()
 		0.0f, 1.0f, 1.0f
 	};
 
-	unsigned int VBO[2], VAO, EBO;
+	Sphere newSphere;
+
+	unsigned int VBO, VAO, EBO;
 	//glGenBuffers(1, &EBO);
 
 	glGenVertexArrays(1, &VAO);
-	glGenBuffers(2, VBO);
+	glGenBuffers(1, &VBO);
+	glGenBuffers(1, &EBO);
 
 	glBindVertexArray(VAO);
 
-	glBindBuffer(GL_ARRAY_BUFFER, VBO[0]);
-	// Copies the vertex data (vertices) to the buffer's memory
-	// The buffer is GL_ARRAY_BUFFER which is bound to VBO
-	glBufferData(GL_ARRAY_BUFFER, sizeof(boxVertices), boxVertices, GL_STATIC_DRAW);
-	
-	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(0);
-	
-	glBindBuffer(GL_ARRAY_BUFFER, VBO[1]);
-	glBufferData(GL_ARRAY_BUFFER, sizeof(boxColors), boxColors, GL_STATIC_DRAW);
+	glBindBuffer(GL_ARRAY_BUFFER, VBO);
+	glBufferData(GL_ARRAY_BUFFER, newSphere.getInterleavedVertexSize(), newSphere.getInterleavedVertices(), GL_STATIC_DRAW);
 
-	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
-	glEnableVertexAttribArray(1);
-	
-
-	/*
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
-	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(indices), indices, GL_STATIC_DRAW);
-	*/
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, newSphere.getIndexSize(), newSphere.getIndices(), GL_STATIC_DRAW);
 
-	// Unbinf the VBO and VAO
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glEnableVertexAttribArray(0);
+	glEnableVertexAttribArray(1);
+
+	int stride = newSphere.getInterleavedStride();
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * 3));
+	
+	/*
+	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(float), (void*)0);
+	glEnableVertexAttribArray(0);
+	*/
+	
+	// Unbind the VBO and VAO
 	glBindVertexArray(0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
 	glEnable(GL_DEPTH_TEST);
+	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	glUseProgram(shaderProgram);
 
@@ -306,12 +348,37 @@ int main()
 		unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
+		unsigned int centerLoc = glGetUniformLocation(shaderProgram, "center");
+		glUniform3fv(centerLoc, 1, glm::value_ptr(center));
+
+		unsigned int scaleLoc = glGetUniformLocation(shaderProgram, "scale");
+		glUniform3fv(scaleLoc, 1, glm::value_ptr(scales));
+
+		unsigned int rotLoc = glGetUniformLocation(shaderProgram, "rotation");
+		glUniform4fv(rotLoc, 1, glm::value_ptr(rotation));
+
+		unsigned int opacityLoc = glGetUniformLocation(shaderProgram, "opacity");
+		glUniform1f(opacityLoc, opacity);
+
+		unsigned int colorLoc = glGetUniformLocation(shaderProgram, "color");
+		glUniform3fv(colorLoc, 1, glm::value_ptr(color));
+
+		unsigned int sphLoc = glGetUniformLocation(shaderProgram, "spHarmonics");
+		glUniform3fv(sphLoc, 1, glm::value_ptr(spHarmonic));
+
 		glBindVertexArray(VAO);
-		glDrawArrays(GL_TRIANGLES, 0, 36);
+		//glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
+		glDrawElements(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT, (void*)0);
+		glBindVertexArray(0);
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();
 	}
+
+	// Cleanup
+	glDeleteVertexArrays(1, &VAO);
+	glDeleteBuffers(1, &VBO);
+	glDeleteBuffers(1, &EBO);
 
 	glfwTerminate();
 	return 0; 
