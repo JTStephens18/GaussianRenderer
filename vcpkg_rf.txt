@@ -1,0 +1,5 @@
+install
+pcl
+glfw3
+glew
+glm
