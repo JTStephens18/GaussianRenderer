@@ -9,6 +9,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <vector>
 
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
@@ -34,6 +35,33 @@ float fov = 45.0f;
 
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
+
+//pcl::PointCloud<pcl::PointXYZ> cloud;
+
+// Define custom point type with exact property names
+struct GaussianData {
+	PCL_ADD_POINT4D;                  // Quad-word XYZ + padding
+
+	float nx, ny, nz;                 // Normal vectors
+	float f_dc_0, f_dc_1, f_dc_2;
+	float opacity;
+	float scale_0, scale_1, scale_2;
+	float rot_0, rot_1, rot_2, rot_3;
+
+	PCL_MAKE_ALIGNED_OPERATOR_NEW     // Ensures proper alignment with Eigen
+};
+
+// Register the custom point type with PCL
+POINT_CLOUD_REGISTER_POINT_STRUCT(
+	GaussianData,
+	(float, x, x) (float, y, y) (float, z, z)
+	(float, nx, nx) (float, ny, ny) (float, nz, nz)
+	(float, f_dc_0, f_dc_0) (float, f_dc_1, f_dc_1) (float, f_dc_2, f_dc_2)
+	(float, opacity, opacity)
+	(float, scale_0, scale_0) (float, scale_1, scale_1) (float, scale_2, scale_2)
+	(float, rot_0, rot_0) (float, rot_1, rot_1) (float, rot_2, rot_2) (float, rot_3, rot_3)
+)
+
 
 int main()
 {
@@ -67,48 +95,87 @@ int main()
 	// tell GLFW to capture our mouse
 	glfwSetInputMode(window, GLFW_CURSOR, GLFW_CURSOR_DISABLED);
 
+	// Create a PointCloud with the custom point type
+	pcl::PointCloud<GaussianData>::Ptr cloud(new pcl::PointCloud<GaussianData>);
+
+	// Load the PLY file into the cloud
+	if (pcl::io::loadPLYFile<GaussianData>("C:/Users/JTSte/Downloads/02880940/02880940-817221e45b63cef62f74bdafe5239fba.ply", *cloud) == -1) {  // Load PLY file
+		std::cerr << "Failed to load .ply file " << std::endl;
+		return -1;
+	}
+
+	//int numInstances = cloud->points.size();
+	int numInstances = std::min(static_cast<size_t>(1000), cloud->points.size());
+
+	std::cout << "Loaded " << numInstances << " points " << std::endl;
+
+	// Access and print the scale and rotation values for the first point as a sample
+	if (!cloud->points.empty()) {
+		GaussianData& point = cloud->points[0];
+		std::cout << "First point scale values: "
+			<< point.scale_0 << ", " << point.scale_1 << ", " << point.scale_2 << std::endl;
+		std::cout << "First point rotation values: "
+			<< point.rot_0 << ", " << point.rot_1 << ", " << point.rot_2 << ", " << point.rot_3 << std::endl;
+	};
+
 	const char* vertexShaderSource = R"(
 		#version 330 core
 		layout (location = 0) in vec3 aPos;
 
-		out vec3 outColor;
+		layout (location = 2) in vec3 instancedPos;
+		layout (location = 3) in vec3 instancedScale;
+		layout (location = 4) in vec4 instancedRotation;
+		layout (location = 5) in vec3 instancedColor;
+		layout (location = 6) in float instancedOpacity;
 
 		uniform mat4 model;
 		uniform mat4 view;
 		uniform mat4 projection;	
 
-		uniform vec3 center;
-		uniform vec3 scale;
-		uniform vec4 rotation;
-
 		out vec3 fragPos;
+		out vec3 outColor;
+		out vec3 normal;
+		out float opacity;
 
 		vec3 applyQuaternion(vec3 v, vec4 q) {
 			return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
 		};
 
 		void main() {
-			vec3 scaledPos = scale * aPos;
-			vec3 rotatedPos = applyQuaternion(scaledPos, rotation);
-			vec3 finalPos = rotatedPos + center;
+			vec3 scaledPos = instancedScale * aPos;
+			vec3 rotatedPos = applyQuaternion(scaledPos, instancedRotation);
+			vec3 finalPos = rotatedPos + instancedPos;
 			gl_Position = projection * view * model * vec4(finalPos, 1.0);
-			fragPos = scaledPos;
+			fragPos = finalPos;
+			outColor = instancedColor;
+			normal = applyQuaternion(aPos, instancedRotation);
+			opacity = instancedOpacity;
 		}
 	)";
 
 	const char* fragmentShaderSource = R"(
 		#version 330 core
 		in vec3 fragPos;
+		in vec3 normal;
+		in vec3 outColor;
+		in float opacity;
+
 		out vec4 FragColor;
 
-		uniform float opacity;
-		uniform vec3 color;
-		uniform vec3 spHarmonics;
+		uniform vec3 viewPos;
 
 		void main() {
-			float gaussianValue = exp(-dot(fragPos, fragPos));
-			vec3 harmonicsColor = color + spHarmonics * gaussianValue;
-			FragColor = vec4(harmonicsColor, opacity * gaussianValue);
+			vec3 lightPos = vec3(5.0f, 5.0f, 5.0f);
+			vec3 norm = normalize(normal);
+			vec3 lightDir = normalize(lightPos - fragPos);
+			//vec3 viewDir = normalize(viewPos - fragPos);
+
+			float diff = max(dot(norm, lightDir), 0.0);
+			vec3 diffuse = diff * outColor;
+
+			vec3 ambient = 0.1 * outColor;
+
+			FragColor = vec4(ambient + diffuse, opacity);
 		}
 	)";
 
@@ -133,6 +200,14 @@ int main()
 			infoLog << std::endl;
 	}
 
+	glGetShaderiv(fragmentShader, GL_COMPILE_STATUS, &success);
+
+	if (!success) {
+		glGetShaderInfoLog(fragmentShader, 512, NULL, infoLog);
+		std::cout << "ERROR::SHADER::FRAGMENT::COMPILATION_FAILED\n" <<
+			infoLog << std::endl;
+	}
+
 	unsigned int shaderProgram;
 	shaderProgram = glCreateProgram();
 	glAttachShader(shaderProgram, vertexShader);
@@ -141,14 +216,6 @@ int main()
 
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
-
-	// Temp gaussian parameters
-	glm::vec3 center = glm::vec3(-0.20695215f, -0.07309745, -0.032607663);
-	glm::vec3 scales = glm::vec3(-4.38290596f, -5.57705736f, -5.53777361f);
-	glm::quat rotation = glm::quat(0.93376312f, 0.02444352f, 0.3460566f, 0.08794192f);
-	glm::vec3 spHarmonic = glm::vec3(0.25771704f, 0.25211358f, 0.24187477f);
-	glm::vec3 color = glm::vec3(1.0f, 0.2f, 0.5f);
-	float opacity = -1.3434249f;
 
 	Sphere newSphere;
 
@@ -167,20 +234,93 @@ int main()
 	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, EBO);
 	glBufferData(GL_ELEMENT_ARRAY_BUFFER, newSphere.getIndexSize(), newSphere.getIndices(), GL_STATIC_DRAW);
 
-	glEnableVertexAttribArray(0);
-	glEnableVertexAttribArray(1);
-
 	int stride = newSphere.getInterleavedStride();
 	glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, stride, (void*)0);
+	glEnableVertexAttribArray(0);
+
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * 3));
+	glEnableVertexAttribArray(1);
+
+
+	glBindVertexArray(0);
+
+
+	std::vector<float> instanceData;
+	instanceData.reserve(numInstances * 14); // pos(3) + scale(3) + rot(4) + color(3) + opacity(1)
+	//instanceData.reserve(numInstances * 14);
+
+	for (int i = 0; i < numInstances; ++i) {
+		const auto& point = cloud->points[i];
+
+		// Position
+		instanceData.push_back(point.x);
+		instanceData.push_back(point.y);
+		instanceData.push_back(point.z);
+		
+		// Scale
+		instanceData.push_back(point.scale_0);
+		instanceData.push_back(point.scale_1);
+		instanceData.push_back(point.scale_2);
+		
+		// Rotation (quaternion)
+		instanceData.push_back(point.rot_0);
+		instanceData.push_back(point.rot_1);
+		instanceData.push_back(point.rot_2);
+		instanceData.push_back(point.rot_3);
+
+		// Color (from f_dc components)
+		instanceData.push_back(point.f_dc_0);
+		instanceData.push_back(point.f_dc_1);
+		instanceData.push_back(point.f_dc_2);
+		
+		// Opacity
+		instanceData.push_back(point.opacity);
+	}
+
+
+	unsigned int instanceVBO;
+	glGenBuffers(1, &instanceVBO);
+
+	glBindVertexArray(VAO);
+
+	glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
+	glBufferData(GL_ARRAY_BUFFER, numInstances * sizeof(float) * 14, instanceData.data(), GL_STATIC_DRAW);
+
+	// Position
+	glEnableVertexAttribArray(2);
+	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)0);
+
+	// Scale
+	glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(3 * sizeof(float)));
+	glEnableVertexAttribArray(3);
+
+	// Rotation
+	glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(6 * sizeof(float)));
+	glEnableVertexAttribArray(4);
+
+	// Color 
+	glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(10 * sizeof(float)));
+	glEnableVertexAttribArray(5);
+
+	// Opacity
+	glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(13 * sizeof(float)));
+	glEnableVertexAttribArray(6);
+
+	glVertexAttribDivisor(2, 1);
+	glVertexAttribDivisor(3, 1);
+	glVertexAttribDivisor(4, 1);
+	glVertexAttribDivisor(5, 1);
+	glVertexAttribDivisor(6, 1);
 
 	// Unbind the VBO and VAO
 	glBindVertexArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+	//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
-	glEnable(GL_DEPTH_TEST);
-	glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
+	//glEnable(GL_DEPTH_TEST);
+	glEnable(GL_CULL_FACE);
+	glCullFace(GL_BACK);
+	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	glUseProgram(shaderProgram);
 
@@ -217,27 +357,15 @@ int main()
 		unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-		unsigned int centerLoc = glGetUniformLocation(shaderProgram, "center");
-		glUniform3fv(centerLoc, 1, glm::value_ptr(center));
+		//glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(cameraPos));
 
-		unsigned int scaleLoc = glGetUniformLocation(shaderProgram, "scale");
-		glUniform3fv(scaleLoc, 1, glm::value_ptr(scales));
-
-		unsigned int rotLoc = glGetUniformLocation(shaderProgram, "rotation");
-		glUniform4fv(rotLoc, 1, glm::value_ptr(rotation));
-
-		unsigned int opacityLoc = glGetUniformLocation(shaderProgram, "opacity");
-		glUniform1f(opacityLoc, opacity);
-
-		unsigned int colorLoc = glGetUniformLocation(shaderProgram, "color");
-		glUniform3fv(colorLoc, 1, glm::value_ptr(color));
-
-		unsigned int sphLoc = glGetUniformLocation(shaderProgram, "spHarmonics");
-		glUniform3fv(sphLoc, 1, glm::value_ptr(spHarmonic));
+		glEnable(GL_BLEND);
+		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 		glBindVertexArray(VAO);
 		//glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
-		glDrawElements(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT, (void*)0);
+		//glDrawElements(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT,(void*)0);
+		glDrawElementsInstanced(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT, 0, numInstances);
 		glBindVertexArray(0);
 
 		glfwSwapBuffers(window);
