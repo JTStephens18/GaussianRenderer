@@ -36,6 +36,18 @@ float fov = 45.0f;
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
 
+std::vector<glm::vec4> calculateRotationNorms(const std:: vector<glm::vec4>& rots) {
+	std::vector<glm::vec4> norms;
+	norms.reserve(rots.size());
+
+	for (const auto& vec : rots) {
+		float norm = glm::length(vec) + 1e-9f;
+		glm::vec4 normVec = vec / norm;
+		norms.push_back(normVec);
+	}
+	return norms;
+}
+
 //pcl::PointCloud<pcl::PointXYZ> cloud;
 
 // Define custom point type with exact property names
@@ -116,6 +128,8 @@ int main()
 			<< point.scale_0 << ", " << point.scale_1 << ", " << point.scale_2 << std::endl;
 		std::cout << "First point rotation values: "
 			<< point.rot_0 << ", " << point.rot_1 << ", " << point.rot_2 << ", " << point.rot_3 << std::endl;
+		std::cout << "First point color values: "
+			<< point.f_dc_0 << ", " << point.f_dc_0 << ", " << point.f_dc_0 << ", "  << std::endl;
 	};
 
 	const char* vertexShaderSource = R"(
@@ -175,7 +189,7 @@ int main()
 
 			vec3 ambient = 0.1 * outColor;
 
-			FragColor = vec4(ambient + diffuse, opacity);
+			FragColor = vec4(outColor, opacity);
 		}
 	)";
 
@@ -263,10 +277,32 @@ int main()
 		instanceData.push_back(point.scale_2);
 		
 		// Rotation (quaternion)
+
+		std::vector<glm::vec4> rots = {
+			glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3)
+		};
+
+		std::vector<glm::vec4> norms = calculateRotationNorms(rots);
+
+		for (const auto& normVec : norms) {
+			/*std::cout << "Normalized vec4: ("
+				<< normVec.x << ", "
+				<< normVec.y << ", "
+				<< normVec.z << ", "
+				<< normVec.w << ")\n";
+				*/
+
+			instanceData.push_back(normVec.x);
+			instanceData.push_back(normVec.y);
+			instanceData.push_back(normVec.z);
+			instanceData.push_back(normVec.w);
+		}
+		/*
 		instanceData.push_back(point.rot_0);
 		instanceData.push_back(point.rot_1);
 		instanceData.push_back(point.rot_2);
 		instanceData.push_back(point.rot_3);
+		*/
 
 		// Color (from f_dc components)
 		instanceData.push_back(point.f_dc_0);
@@ -318,8 +354,8 @@ int main()
 	//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
 	//glEnable(GL_DEPTH_TEST);
-	glEnable(GL_CULL_FACE);
-	glCullFace(GL_BACK);
+	//glEnable(GL_CULL_FACE);
+	//glCullFace(GL_BACK);
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	glUseProgram(shaderProgram);
@@ -361,6 +397,8 @@ int main()
 
 		glEnable(GL_BLEND);
 		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+		glEnable(GL_DEPTH_TEST);
+		glDepthFunc(GL_LEQUAL);
 
 		glBindVertexArray(VAO);
 		//glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
