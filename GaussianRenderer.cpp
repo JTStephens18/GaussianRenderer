@@ -7,9 +7,11 @@
 #include <GL/glew.h>
 #include <GLFW/glfw3.h> 
 #include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
 #include <vector>
+#include <cmath>
 
 
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
@@ -22,7 +24,7 @@ void processInput(GLFWwindow* window, auto& cloud);
 const unsigned int SCREEN_WIDTH = 800;
 const unsigned int SCREEN_HEIGHT = 600;
 
-const unsigned int numInstancesCount = 100;
+const unsigned int numInstancesCount = 14000;
 
 //glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
 //glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
@@ -39,6 +41,9 @@ float fov = 45.0f;
 
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
+
+std::vector<size_t> sortedIdx;
+const float C0 = 0.28209479177387814f;
 
 std::vector<glm::vec4> calculateRotationNorms(const std:: vector<glm::vec4>& rots) {
 	std::vector<glm::vec4> norms;
@@ -83,10 +88,13 @@ std::vector<float> viewDepth(numInstancesCount);
 
 static void computeViewDepths(const auto& splatCloud, const glm::mat4& viewMatrix) {
 	viewDepth.clear();
+	size_t count = 0;
 	for (const auto& point : splatCloud->points) {
+		if (count > numInstancesCount) break;
 		glm::vec4 positions = glm::vec4(point.x, point.y, point.z, 1.0f);
 		glm::vec4 viewPos = viewMatrix * positions;
 		viewDepth.push_back(viewPos.z);
+		++count;
 	}
 	auto maxElement = std::max_element(viewDepth.begin(), viewDepth.end());
 	auto minElement = std::min_element(viewDepth.begin(), viewDepth.end());
@@ -126,6 +134,24 @@ std::vector<size_t> radixSort(const auto& splatCloud, const glm::mat4& viewMatri
 	}
 	return indices;
 };
+
+void performSorting(std::vector<size_t>& sortedIdxArr, const auto& splatCloud) {
+	glm::mat4 viewMat = glm::lookAt(
+		cameraPos,
+		cameraFront,
+		cameraUp
+	);
+
+	sortedIdxArr = radixSort(splatCloud, viewMat);
+};
+
+glm::vec3 SH2RGB(glm::vec3 colors) {
+	return 0.5f + C0 * colors;
+};
+
+float sigmoid(float opacity) {
+	return 1.0 / (1.0 + std::exp(-opacity));
+}
 
 
 int main()
@@ -192,33 +218,29 @@ int main()
 		cameraUp
 	);
 
-	std::vector<size_t> sortedIdx = radixSort(cloud, viewMat);
+	sortedIdx = radixSort(cloud, viewMat);
 
 	std::cout << "View depth sorted idx val " << viewDepth[sortedIdx[0]] << std::endl;
 
 	std::cout << "Sorted idx 0: " << sortedIdx[0] << std::endl;
 	std::cout << "Sorted idx 1 " << sortedIdx[1] << std::endl;
 	std::cout << "Sorted idx 10: " << sortedIdx[10] << std::endl;
-	std::cout << "Sorted idx 100: " << sortedIdx[100] << std::endl;
-	std::cout << "Sorted idx 1000: " << sortedIdx[1000] << std::endl;
+	//std::cout << "Sorted idx 100: " << sortedIdx[100] << std::endl;
+	//std::cout << "Sorted idx 1000: " << sortedIdx[1000] << std::endl;
 
 	const char* vertexShaderSource = R"(
 		#version 330 core
 		layout (location = 0) in vec3 aPos;
 
-		layout (location = 2) in vec3 instancedPos;
-		layout (location = 3) in vec3 instancedScale;
-		layout (location = 4) in vec4 instancedRotation;
-		layout (location = 5) in vec3 instancedColor;
-		layout (location = 6) in float instancedOpacity;
-
 		uniform mat4 model;
 		uniform mat4 view;
-		uniform mat4 projection;	
+		uniform mat4 projection;
+		uniform vec3 u_Color;
+		uniform float u_Opacity;
 
 		out vec3 fragPos;
 		out vec3 outColor;
-		out vec3 normal;
+		//out vec3 normal;
 		out float opacity;
 
 		vec3 applyQuaternion(vec3 v, vec4 q) {
@@ -226,21 +248,21 @@ int main()
 		};
 
 		void main() {
-			vec3 scaledPos = instancedScale * aPos;
-			vec3 rotatedPos = applyQuaternion(scaledPos, instancedRotation);
-			vec3 finalPos = rotatedPos + instancedPos;
-			gl_Position = projection * view * model * vec4(finalPos, 1.0);
-			fragPos = finalPos;
-			outColor = instancedColor;
-			normal = applyQuaternion(aPos, instancedRotation);
-			opacity = instancedOpacity;
+			//vec3 scaledPos = instancedScale * aPos;
+			//vec3 rotatedPos = applyQuaternion(scaledPos, instancedRotation);
+			//vec3 finalPos = rotatedPos + instancedPos;
+			gl_Position = projection * view * model * vec4(aPos, 1.0);
+			fragPos = aPos;
+			outColor = u_Color;
+			//normal = applyQuaternion(aPos, instancedRotation);
+			opacity = u_Opacity;
 		}
 	)";
 
 	const char* fragmentShaderSource = R"(
 		#version 330 core
 		in vec3 fragPos;
-		in vec3 normal;
+		//in vec3 normal;
 		in vec3 outColor;
 		in float opacity;
 
@@ -248,21 +270,13 @@ int main()
 
 		uniform vec3 viewPos;
 
-		void main() {
-			vec3 lightPos = vec3(5.0f, 5.0f, 5.0f);
-			vec3 norm = normalize(normal);
-			vec3 lightDir = normalize(lightPos - fragPos);
-			//vec3 viewDir = normalize(viewPos - fragPos);
+		void main() {			
+			//if(outColor.r < 0 || outColor.g < 0 || outColor.b < 0) discard;
 
-			float diff = max(dot(norm, lightDir), 0.0);
-			vec3 diffuse = diff * outColor;
-
-			vec3 ambient = 0.1 * outColor;
-
-			if(opacity < 1.f / 255.f) 
-				discard;
+			if(opacity < 1. / 255.) discard;
 
 			FragColor = vec4(outColor, opacity);
+			//FragColor = vec4(255.0, 59.0, 130.0, 1.0);
 		}
 	)";
 
@@ -329,8 +343,8 @@ int main()
 	glEnableVertexAttribArray(1);
 
 
-	glBindVertexArray(0);
-
+	//glBindVertexArray(0);
+	/*
 	std::vector<float> instanceData;
 	instanceData.reserve(numInstances * 14); // pos(3) + scale(3) + rot(4) + color(3) + opacity(1)
 	//instanceData.reserve(numInstances * 14);
@@ -407,9 +421,11 @@ int main()
 	glVertexAttribDivisor(5, 1);
 	glVertexAttribDivisor(6, 1);
 
+	*/
+
 	// Unbind the VBO and VAO
 	glBindVertexArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	//glBindBuffer(GL_ARRAY_BUFFER, 0);
 	//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
 	//glEnable(GL_DEPTH_TEST);
@@ -417,12 +433,12 @@ int main()
 	//glCullFace(GL_BACK);
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-	//glEnable(GL_BLEND);
-	//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+	glEnable(GL_BLEND);
+	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
-	//glDepthMask(GL_FALSE);
+	glDepthMask(GL_FALSE);
 
-	//glEnable(GL_DEPTH_TEST);
+	glEnable(GL_DEPTH_TEST);
 
 	glUseProgram(shaderProgram);
 
@@ -437,7 +453,7 @@ int main()
 		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-		glm::mat4 model = glm::mat4(1.0f); // Initialize identity matrix
+		//glm::mat4 model = glm::mat4(1.0f); // Initialize identity matrix
 		glm::mat4 view = glm::mat4(1.0f);
 		glm::mat4 projection = glm::mat4(1.0f);
 
@@ -454,18 +470,45 @@ int main()
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
 		float angle = 20.0f;
-		model = glm::rotate(model, glm::radians(angle), glm::vec3(1.0f, 0.3f, 0.5f));
+		//model = glm::rotate(model, glm::radians(angle), glm::vec3(1.0f, 0.3f, 0.5f));
 
+		for (int i = 0; i < numInstancesCount; ++i) {
+			const auto& point = cloud->points[sortedIdx[i]];
+
+			glm::mat4 model = glm::mat4(1.0f);
+
+			model = glm::translate(model, glm::vec3(point.x, point.y, point.z));
+
+			model = glm::scale(model, glm::vec3(point.scale_0, point.scale_1, point.scale_2));
+
+			glm::quat rotation = glm::quat(point.rot_3, point.rot_0, point.rot_1, point.rot_2);
+			model *= glm::mat4_cast(rotation);
+
+			unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
+			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+
+			//glUniform3f(glGetUniformLocation(shaderProgram, "u_Color"), point.f_dc_0, point.f_dc_1, point.f_dc_2);
+			glm::vec3 colors = SH2RGB(glm::vec3(point.f_dc_0, point.f_dc_1, point.f_dc_2));
+			glUniform3f(glGetUniformLocation(shaderProgram, "u_Color"), colors.x, colors.y, colors.z);
+			glUniform1f(glGetUniformLocation(shaderProgram, "u_Opacity"), sigmoid(point.opacity));
+
+			glBindVertexArray(VAO);
+			glDrawElements(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT, (void*)0);
+		};
+		/*
 		unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
 		glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
+		*/
 
 		//glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(cameraPos));
 
-		glBindVertexArray(VAO);
+		//glBindVertexArray(VAO);
 		//glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 		//glDrawElements(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT,(void*)0);
-		glDrawElementsInstanced(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT, 0, numInstances);
-		glBindVertexArray(0);
+		//glDrawElementsInstanced(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT, 0, numInstances);
+		//glBindVertexArray(0);
+
+		glDepthMask(GL_TRUE);
 
 		glfwSwapBuffers(window);
 		glfwPollEvents();
@@ -508,10 +551,13 @@ void processInput(GLFWwindow* window, auto& cloud) {
 		std::cout << "Sorted idx 100: " << sortedIdx[100] << std::endl;
 		std::cout << "Sorted idx 1000: " << sortedIdx[1000] << std::endl;
 		*/
-
+		/*
 		std::cout << "Camera pos " << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << std::endl;
 		std::cout << "Camera Front " << cameraFront.x << ", " << cameraFront.y << ", " << cameraFront.z << std::endl;
 		std::cout << "Camera up" << cameraUp.x << ", " << cameraUp.y << ", " << cameraUp.z << std::endl;
+		*/
+
+		performSorting(sortedIdx, cloud);
 	}
 }
 //
