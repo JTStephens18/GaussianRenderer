@@ -24,12 +24,12 @@ void processInput(GLFWwindow* window, auto& cloud);
 const unsigned int SCREEN_WIDTH = 800;
 const unsigned int SCREEN_HEIGHT = 600;
 
-const unsigned int numInstancesCount = 14000;
+const unsigned int numInstancesCount = 14598;
 
-//glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
-//glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
-glm::vec3 cameraPos = glm::vec3(-1.26f, -0.137f, 21.002f);
-glm::vec3 cameraFront = glm::vec3(0.0366f, -0.0122f, -0.99f);
+glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
+glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+//glm::vec3 cameraPos = glm::vec3(-1.26f, -0.137f, 21.002f);
+//glm::vec3 cameraFront = glm::vec3(0.0366f, -0.0122f, -0.99f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
 bool firstMouse = true;
@@ -55,6 +55,25 @@ std::vector<glm::vec4> calculateRotationNorms(const std:: vector<glm::vec4>& rot
 		norms.push_back(normVec);
 	}
 	return norms;
+}
+
+std::vector<glm::vec4> normalizeRotation(std::vector<glm::vec4> rots) {
+	std::vector<glm::vec4> normalizedRots;
+	float sumOfSqaures = 0.0f;
+		for (const auto& rot : rots) {
+			sumOfSqaures += rot.x * rot.x + rot.y * rot.y + rot.z * rot.z + rot.w * rot.w;
+			float normalizedVal = std::sqrt(sumOfSqaures);
+			normalizedRots.push_back(glm::vec4(rot.x / normalizedVal, rot.y / normalizedVal, rot.z / normalizedVal, rot.w / normalizedVal));
+			/*
+			normalizedRots.push_back(glm::vec4(
+				glm::clamp((rot.x / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f), 
+				glm::clamp((rot.y / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f), 
+				glm::clamp((rot.z / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f), 
+				glm::clamp((rot.w / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f))
+			);
+			*/
+		}
+	return normalizedRots;
 }
 
 //pcl::PointCloud<pcl::PointXYZ> cloud;
@@ -90,7 +109,7 @@ static void computeViewDepths(const auto& splatCloud, const glm::mat4& viewMatri
 	viewDepth.clear();
 	size_t count = 0;
 	for (const auto& point : splatCloud->points) {
-		if (count > numInstancesCount) break;
+		if (count >= numInstancesCount) break;
 		glm::vec4 positions = glm::vec4(point.x, point.y, point.z, 1.0f);
 		glm::vec4 viewPos = viewMatrix * positions;
 		viewDepth.push_back(viewPos.z);
@@ -212,6 +231,17 @@ int main()
 			<< point.f_dc_0 << ", " << point.f_dc_0 << ", " << point.f_dc_0 << ", "  << std::endl;
 	};
 
+	std::vector<glm::vec4> rotationsTest;
+	for (int i = 0; i < numInstancesCount; ++i) {
+		const auto& point = cloud->points[i];
+		rotationsTest.push_back(glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3));
+	}
+	
+	std::vector<glm::vec4> newRots = normalizeRotation(rotationsTest);
+
+	std::cout << "New rots " << newRots[0].x << ", " << newRots[0].y << ", " << newRots[0].z << ", " << newRots[0].w << std::endl;
+	std::cout << "New rots size " << newRots.size() << std::endl;
+
 	glm::mat4 viewMat = glm::lookAt(
 		cameraPos,
 		cameraFront,
@@ -273,7 +303,7 @@ int main()
 		void main() {			
 			//if(outColor.r < 0 || outColor.g < 0 || outColor.b < 0) discard;
 
-			if(opacity < 1. / 255.) discard;
+			//if(opacity < 1. / 255.) discard;
 
 			FragColor = vec4(outColor, opacity);
 			//FragColor = vec4(255.0, 59.0, 130.0, 1.0);
@@ -479,15 +509,16 @@ int main()
 
 			model = glm::translate(model, glm::vec3(point.x, point.y, point.z));
 
-			model = glm::scale(model, glm::vec3(point.scale_0, point.scale_1, point.scale_2));
+			model = glm::scale(model, glm::vec3(exp(point.scale_0), exp(point.scale_1), exp(point.scale_2)));
 
-			glm::quat rotation = glm::quat(point.rot_3, point.rot_0, point.rot_1, point.rot_2);
+			//glm::quat rotation = glm::quat(point.rot_3, point.rot_0, point.rot_1, point.rot_2);
+			//glm::quat rotation = glm::quat(newRots[sortedIdx[i]].w, newRots[sortedIdx[i]].x, newRots[sortedIdx[i]].y, newRots[sortedIdx[i]].z);
+			glm::quat rotation = glm::quat(newRots[sortedIdx[i]].x, newRots[sortedIdx[i]].y, newRots[sortedIdx[i]].z, newRots[sortedIdx[i]].w);
 			model *= glm::mat4_cast(rotation);
 
 			unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
 			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
-			//glUniform3f(glGetUniformLocation(shaderProgram, "u_Color"), point.f_dc_0, point.f_dc_1, point.f_dc_2);
 			glm::vec3 colors = SH2RGB(glm::vec3(point.f_dc_0, point.f_dc_1, point.f_dc_2));
 			glUniform3f(glGetUniformLocation(shaderProgram, "u_Color"), colors.x, colors.y, colors.z);
 			glUniform1f(glGetUniformLocation(shaderProgram, "u_Opacity"), sigmoid(point.opacity));
@@ -551,11 +582,11 @@ void processInput(GLFWwindow* window, auto& cloud) {
 		std::cout << "Sorted idx 100: " << sortedIdx[100] << std::endl;
 		std::cout << "Sorted idx 1000: " << sortedIdx[1000] << std::endl;
 		*/
-		/*
+		
 		std::cout << "Camera pos " << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << std::endl;
 		std::cout << "Camera Front " << cameraFront.x << ", " << cameraFront.y << ", " << cameraFront.z << std::endl;
 		std::cout << "Camera up" << cameraUp.x << ", " << cameraUp.y << ", " << cameraUp.z << std::endl;
-		*/
+		
 
 		performSorting(sortedIdx, cloud);
 	}
