@@ -1,14 +1,6 @@
 # ninja log v5
 25	2901	7515056022227390	CMakeFiles/GaussianRenderer.dir/Sphere.cpp.obj	65cfd668b94aee5e
-83	11109	7519157927174859	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
-11111	12956	7519157930386295	GaussianRenderer.exe	d887fac06ce34f5
-95	10285	7519217996543520	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
-10286	12220	7519218002007406	GaussianRenderer.exe	d887fac06ce34f5
-52	11643	7519218508944867	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
-11644	13604	7519218513747249	GaussianRenderer.exe	d887fac06ce34f5
-65	10676	7519218893272800	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
-10679	12601	7519218897180091	GaussianRenderer.exe	d887fac06ce34f5
-79	11063	7519229881486534	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
-11065	13229	7519229887038002	GaussianRenderer.exe	d887fac06ce34f5
-60	10835	7519230251297297	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
-10836	12540	7519230255124260	GaussianRenderer.exe	d887fac06ce34f5
+90	16383	7544216692648693	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
+16385	18807	7544216698595593	GaussianRenderer.exe	d887fac06ce34f5
+91	18985	7545104456744644	CMakeFiles/GaussianRenderer.dir/GaussianRenderer.cpp.obj	1aaf9f8a4164069
+18987	25870	7545104465524658	GaussianRenderer.exe	d887fac06ce34f5

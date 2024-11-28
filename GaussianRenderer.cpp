@@ -15,15 +15,19 @@
 void framebuffer_size_callback(GLFWwindow* window, int width, int height);
 void mouse_callback(GLFWwindow* window, double xpos, double ypos);
 void scroll_callback(GLFWwindow* window, double xoffset, double yoffset);
-void processInput(GLFWwindow* window);
+void processInput(GLFWwindow* window, auto& cloud);
 //void mouse_button_callback(GLFWwindow* window, int button, int action, int mods);
 //void cursor_position_callback(GLFWwindow* window, double xpos, double ypos); 
 
 const unsigned int SCREEN_WIDTH = 800;
 const unsigned int SCREEN_HEIGHT = 600;
 
-glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
-glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+const unsigned int numInstancesCount = 100;
+
+//glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
+//glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
+glm::vec3 cameraPos = glm::vec3(-1.26f, -0.137f, 21.002f);
+glm::vec3 cameraFront = glm::vec3(0.0366f, -0.0122f, -0.99f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
 bool firstMouse = true;
@@ -74,6 +78,55 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
 	(float, rot_0, rot_0) (float, rot_1, rot_1) (float, rot_2, rot_2) (float, rot_3, rot_3)
 )
 
+std::vector<int> sortedGaussianIndices(numInstancesCount);
+std::vector<float> viewDepth(numInstancesCount);
+
+static void computeViewDepths(const auto& splatCloud, const glm::mat4& viewMatrix) {
+	viewDepth.clear();
+	for (const auto& point : splatCloud->points) {
+		glm::vec4 positions = glm::vec4(point.x, point.y, point.z, 1.0f);
+		glm::vec4 viewPos = viewMatrix * positions;
+		viewDepth.push_back(viewPos.z);
+	}
+	auto maxElement = std::max_element(viewDepth.begin(), viewDepth.end());
+	auto minElement = std::min_element(viewDepth.begin(), viewDepth.end());
+
+	std::cout << "Min element" << *minElement << std::endl;
+};
+
+std::vector<size_t> radixSort(const auto& splatCloud, const glm::mat4& viewMatrix) {
+	const int RADIX_BITS = 8;
+	const int RADIX_BUCKETS = 1 << RADIX_BITS;
+
+	computeViewDepths(splatCloud, viewMatrix);
+
+	std::vector<size_t> indices(viewDepth.size());
+	std::iota(indices.begin(), indices.end(), 0);
+
+	std::vector<size_t> aux(indices.size());
+
+	for (int shift = 0; shift < 32; shift += RADIX_BITS) {
+		std::vector<int> count(RADIX_BUCKETS, 0);
+
+		for (size_t index: indices) {
+			int bucket = (*(uint32_t*)&viewDepth[index] >> shift) & (RADIX_BUCKETS - 1);
+			count[bucket]++;
+		}
+
+		std::vector<int> prefixSum(RADIX_BUCKETS, 0);
+		for (int i = 1; i < RADIX_BUCKETS; ++i) {
+			prefixSum[i] = prefixSum[i - 1] + count[i - 1];
+		}
+
+		for (auto it = indices.rbegin(); it != indices.rend(); ++it) {
+			int bucket = (*(uint32_t*)&viewDepth[*it] >> shift) & (RADIX_BUCKETS - 1);
+			aux[prefixSum[bucket]++] = *it;
+		}
+		indices.swap(aux);
+	}
+	return indices;
+};
+
 
 int main()
 {
@@ -111,15 +164,16 @@ int main()
 	pcl::PointCloud<GaussianData>::Ptr cloud(new pcl::PointCloud<GaussianData>);
 
 	// Load the PLY file into the cloud
-	if (pcl::io::loadPLYFile<GaussianData>("C:/Users/JTSte/Downloads/02880940/02880940-817221e45b63cef62f74bdafe5239fba.ply", *cloud) == -1) {  // Load PLY file
+	if (pcl::io::loadPLYFile<GaussianData>("C:/Users/JTSte/Downloads/02880940/02880940-5bb12905529c85359d3d767e1bc88d65.ply", *cloud) == -1) {  // Load PLY file
 		std::cerr << "Failed to load .ply file " << std::endl;
 		return -1;
 	}
 
 	//int numInstances = cloud->points.size();
-	int numInstances = std::min(static_cast<size_t>(1000), cloud->points.size());
+	int numInstances = std::min(static_cast<size_t>(numInstancesCount), cloud->points.size());
 
 	std::cout << "Loaded " << numInstances << " points " << std::endl;
+	std::cout << "Point cloud size " << cloud->points.size() << std::endl;
 
 	// Access and print the scale and rotation values for the first point as a sample
 	if (!cloud->points.empty()) {
@@ -131,6 +185,22 @@ int main()
 		std::cout << "First point color values: "
 			<< point.f_dc_0 << ", " << point.f_dc_0 << ", " << point.f_dc_0 << ", "  << std::endl;
 	};
+
+	glm::mat4 viewMat = glm::lookAt(
+		cameraPos,
+		cameraFront,
+		cameraUp
+	);
+
+	std::vector<size_t> sortedIdx = radixSort(cloud, viewMat);
+
+	std::cout << "View depth sorted idx val " << viewDepth[sortedIdx[0]] << std::endl;
+
+	std::cout << "Sorted idx 0: " << sortedIdx[0] << std::endl;
+	std::cout << "Sorted idx 1 " << sortedIdx[1] << std::endl;
+	std::cout << "Sorted idx 10: " << sortedIdx[10] << std::endl;
+	std::cout << "Sorted idx 100: " << sortedIdx[100] << std::endl;
+	std::cout << "Sorted idx 1000: " << sortedIdx[1000] << std::endl;
 
 	const char* vertexShaderSource = R"(
 		#version 330 core
@@ -188,6 +258,9 @@ int main()
 			vec3 diffuse = diff * outColor;
 
 			vec3 ambient = 0.1 * outColor;
+
+			if(opacity < 1.f / 255.f) 
+				discard;
 
 			FragColor = vec4(outColor, opacity);
 		}
@@ -258,13 +331,12 @@ int main()
 
 	glBindVertexArray(0);
 
-
 	std::vector<float> instanceData;
 	instanceData.reserve(numInstances * 14); // pos(3) + scale(3) + rot(4) + color(3) + opacity(1)
 	//instanceData.reserve(numInstances * 14);
 
 	for (int i = 0; i < numInstances; ++i) {
-		const auto& point = cloud->points[i];
+		const auto& point = cloud->points[sortedIdx[i]];
 
 		// Position
 		instanceData.push_back(point.x);
@@ -285,24 +357,11 @@ int main()
 		std::vector<glm::vec4> norms = calculateRotationNorms(rots);
 
 		for (const auto& normVec : norms) {
-			/*std::cout << "Normalized vec4: ("
-				<< normVec.x << ", "
-				<< normVec.y << ", "
-				<< normVec.z << ", "
-				<< normVec.w << ")\n";
-				*/
-
 			instanceData.push_back(normVec.x);
 			instanceData.push_back(normVec.y);
 			instanceData.push_back(normVec.z);
 			instanceData.push_back(normVec.w);
 		}
-		/*
-		instanceData.push_back(point.rot_0);
-		instanceData.push_back(point.rot_1);
-		instanceData.push_back(point.rot_2);
-		instanceData.push_back(point.rot_3);
-		*/
 
 		// Color (from f_dc components)
 		instanceData.push_back(point.f_dc_0);
@@ -358,6 +417,13 @@ int main()
 	//glCullFace(GL_BACK);
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
+	//glEnable(GL_BLEND);
+	//glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	//glDepthMask(GL_FALSE);
+
+	//glEnable(GL_DEPTH_TEST);
+
 	glUseProgram(shaderProgram);
 
 	while (!glfwWindowShouldClose(window)) {
@@ -366,7 +432,7 @@ int main()
 		deltaTime = currentFrame - lastFrame;
 		lastFrame = currentFrame;
 
-		processInput(window);
+		processInput(window, cloud);
 
 		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -395,11 +461,6 @@ int main()
 
 		//glUniform3fv(glGetUniformLocation(shaderProgram, "viewPos"), 1, glm::value_ptr(cameraPos));
 
-		glEnable(GL_BLEND);
-		glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
-		glEnable(GL_DEPTH_TEST);
-		glDepthFunc(GL_LEQUAL);
-
 		glBindVertexArray(VAO);
 		//glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, 0);
 		//glDrawElements(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT,(void*)0);
@@ -419,7 +480,7 @@ int main()
 	return 0;
 }
 
-void processInput(GLFWwindow* window) {
+void processInput(GLFWwindow* window, auto& cloud) {
 	if (glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS)
 		glfwSetWindowShouldClose(window, true);
 	float cameraSpeed = 2.5f * deltaTime;
@@ -433,6 +494,25 @@ void processInput(GLFWwindow* window) {
 	if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS)
 		cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) *
 		cameraSpeed;
+	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
+		/*glm::mat4 viewMat = glm::lookAt(
+			cameraPos,
+			cameraFront,
+			cameraUp
+		);
+		std::vector<size_t> sortedIdx = radixSort(cloud, viewMat);
+
+		std::cout << "Sorted idx 0: " << sortedIdx[0] << std::endl;
+		std::cout << "Sorted idx 1 " << sortedIdx[1] << std::endl;
+		std::cout << "Sorted idx 10: " << sortedIdx[10] << std::endl;
+		std::cout << "Sorted idx 100: " << sortedIdx[100] << std::endl;
+		std::cout << "Sorted idx 1000: " << sortedIdx[1000] << std::endl;
+		*/
+
+		std::cout << "Camera pos " << cameraPos.x << ", " << cameraPos.y << ", " << cameraPos.z << std::endl;
+		std::cout << "Camera Front " << cameraFront.x << ", " << cameraFront.y << ", " << cameraFront.z << std::endl;
+		std::cout << "Camera up" << cameraUp.x << ", " << cameraUp.y << ", " << cameraUp.z << std::endl;
+	}
 }
 //
 ///* Resizes the viewpoint when the window is resized */
