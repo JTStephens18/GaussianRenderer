@@ -24,12 +24,12 @@ void processInput(GLFWwindow* window, auto& cloud);
 const unsigned int SCREEN_WIDTH = 800;
 const unsigned int SCREEN_HEIGHT = 600;
 
-const unsigned int numInstancesCount = 14598;
+const unsigned int numInstancesCount = 1000;
 
 glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
-//glm::vec3 cameraPos = glm::vec3(-1.26f, -0.137f, 21.002f);
-//glm::vec3 cameraFront = glm::vec3(0.0366f, -0.0122f, -0.99f);
+//glm::vec3 cameraPos = glm::vec3(-321.6, -40.0f, 5355.0f);
+//glm::vec3 cameraFront = glm::vec3(9.33f, -3.11f, -252.0f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
 
 bool firstMouse = true;
@@ -45,36 +45,6 @@ float lastFrame = 0.0f;
 std::vector<size_t> sortedIdx;
 const float C0 = 0.28209479177387814f;
 
-std::vector<glm::vec4> calculateRotationNorms(const std:: vector<glm::vec4>& rots) {
-	std::vector<glm::vec4> norms;
-	norms.reserve(rots.size());
-
-	for (const auto& vec : rots) {
-		float norm = glm::length(vec) + 1e-9f;
-		glm::vec4 normVec = vec / norm;
-		norms.push_back(normVec);
-	}
-	return norms;
-}
-
-std::vector<glm::vec4> normalizeRotation(std::vector<glm::vec4> rots) {
-	std::vector<glm::vec4> normalizedRots;
-	float sumOfSqaures = 0.0f;
-		for (const auto& rot : rots) {
-			sumOfSqaures += rot.x * rot.x + rot.y * rot.y + rot.z * rot.z + rot.w * rot.w;
-			float normalizedVal = std::sqrt(sumOfSqaures);
-			normalizedRots.push_back(glm::vec4(rot.x / normalizedVal, rot.y / normalizedVal, rot.z / normalizedVal, rot.w / normalizedVal));
-			/*
-			normalizedRots.push_back(glm::vec4(
-				glm::clamp((rot.x / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f), 
-				glm::clamp((rot.y / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f), 
-				glm::clamp((rot.z / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f), 
-				glm::clamp((rot.w / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f))
-			);
-			*/
-		}
-	return normalizedRots;
-}
 
 //pcl::PointCloud<pcl::PointXYZ> cloud;
 
@@ -104,6 +74,81 @@ POINT_CLOUD_REGISTER_POINT_STRUCT(
 
 std::vector<int> sortedGaussianIndices(numInstancesCount);
 std::vector<float> viewDepth(numInstancesCount);
+
+std::vector<glm::vec4> normRots;
+std::vector<glm::vec3> expScales;
+
+std::vector<glm::vec4> calculateRotationNorms(const std::vector<glm::vec4>& rots) {
+	std::vector<glm::vec4> norms;
+	norms.reserve(rots.size());
+
+	for (const auto& vec : rots) {
+		float norm = glm::length(vec) + 1e-9f;
+		glm::vec4 normVec = vec / norm;
+		norms.push_back(normVec);
+	}
+	return norms;
+}
+
+glm::vec4 normalizeRotation(glm::vec4& rot) {
+	float sumOfSqaures = rot.x * rot.x + rot.y * rot.y + rot.z * rot.z + rot.w * rot.w;
+	float normalizedVal = std::sqrt(sumOfSqaures);
+	return glm::vec4(rot.w / normalizedVal, rot.x / normalizedVal, rot.y / normalizedVal, rot.z / normalizedVal);
+	/*
+	glm::vec4(
+		glm::clamp((rot.x / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f),
+		glm::clamp((rot.y / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f),
+		glm::clamp((rot.z / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f),
+		glm::clamp((rot.w / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f)
+	);
+	*/
+
+	/*
+	glm::vec4(
+		glm::clamp(((rot.x / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f),
+		glm::clamp(((rot.y / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f),
+		glm::clamp(((rot.z / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f),
+		glm::clamp(((rot.w / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f)
+	);
+	*/
+};
+
+void logRotations(std::vector<glm::vec4>& newRots) {
+	std::cout << "New rots size " << newRots.size() << std::endl;
+	std::cout << "New rots " << newRots[0].x << ", " << newRots[0].y << ", " << newRots[0].z << ", " << newRots[0].w << std::endl;
+
+	glm::vec4 minVec(std::numeric_limits<float>::max());
+	glm::vec4 maxVec(std::numeric_limits<float>::lowest());
+
+	// Loop through all the glm::vec4's in the vector
+	for (const auto& vec : newRots) {
+		minVec = glm::min(minVec, vec);
+		maxVec = glm::max(maxVec, vec);
+	}
+
+	// Print out the results
+	std::cout << "Min Value: (" << minVec.x << ", " << minVec.y << ", " << minVec.z << ", " << minVec.w << ")" << std::endl;
+	std::cout << "Max Value: (" << maxVec.x << ", " << maxVec.y << ", " << maxVec.z << ", " << maxVec.w << ")" << std::endl;
+};
+
+void computeSigma(glm::vec4& rots, glm::vec3& scales) {
+	glm::mat3 mMatrix(1.0f);
+
+	glm::vec3 firstRow = glm::vec3();
+};
+
+void performPrecalculations(const auto& cloud) {
+	normRots.clear();
+	for (int i = 0; i < numInstancesCount; ++i) {
+		const auto& point = cloud->points[i];
+		glm::vec4 rotations = glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3);
+		normRots.push_back(normalizeRotation(rotations));
+		expScales.push_back(glm::vec3(exp(point.scale_0), exp(point.scale_1), exp(point.scale_2)));
+	}
+
+	logRotations(normRots);
+};
+
 
 static void computeViewDepths(const auto& splatCloud, const glm::mat4& viewMatrix) {
 	viewDepth.clear();
@@ -170,6 +215,7 @@ glm::vec3 SH2RGB(glm::vec3 colors) {
 
 float sigmoid(float opacity) {
 	return 1.0 / (1.0 + std::exp(-opacity));
+	//return 255.0 / std::exp(-opacity) + 1.0;
 }
 
 
@@ -231,22 +277,26 @@ int main()
 			<< point.f_dc_0 << ", " << point.f_dc_0 << ", " << point.f_dc_0 << ", "  << std::endl;
 	};
 
-	std::vector<glm::vec4> rotationsTest;
-	for (int i = 0; i < numInstancesCount; ++i) {
-		const auto& point = cloud->points[i];
-		rotationsTest.push_back(glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3));
-	}
-	
-	std::vector<glm::vec4> newRots = normalizeRotation(rotationsTest);
-
-	std::cout << "New rots " << newRots[0].x << ", " << newRots[0].y << ", " << newRots[0].z << ", " << newRots[0].w << std::endl;
-	std::cout << "New rots size " << newRots.size() << std::endl;
+	performPrecalculations(cloud);
 
 	glm::mat4 viewMat = glm::lookAt(
 		cameraPos,
-		cameraFront,
+		//cameraFront,
+		cameraPos + cameraFront,
 		cameraUp
 	);
+
+	GaussianData& point = cloud->points[0];
+
+	glm::vec4 center = glm::vec4(point.x, point.y, point.z, 1.0f);
+
+	glm::vec4 cam = viewMat * center;
+
+	std::cout << "Cam values " << cam.x << ", " << cam.y << ", " << cam.z << ", " << cam.w << std::endl;
+
+	glm::mat3 m_Vector;
+
+	//m_Vector.push_back(1.0 - 2.0 * rot[0])
 
 	sortedIdx = radixSort(cloud, viewMat);
 
@@ -268,10 +318,13 @@ int main()
 		uniform vec3 u_Color;
 		uniform float u_Opacity;
 
+		in vec2 triPosition;
+
 		out vec3 fragPos;
 		out vec3 outColor;
 		//out vec3 normal;
 		out float opacity;
+		out vec2 vTriPosition;
 
 		vec3 applyQuaternion(vec3 v, vec4 q) {
 			return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
@@ -286,6 +339,7 @@ int main()
 			outColor = u_Color;
 			//normal = applyQuaternion(aPos, instancedRotation);
 			opacity = u_Opacity;
+			vTriPosition = triPosition;
 		}
 	)";
 
@@ -295,6 +349,7 @@ int main()
 		//in vec3 normal;
 		in vec3 outColor;
 		in float opacity;
+		in vec2 vTriPosition;
 
 		out vec4 FragColor;
 
@@ -303,9 +358,13 @@ int main()
 		void main() {			
 			//if(outColor.r < 0 || outColor.g < 0 || outColor.b < 0) discard;
 
+			float A = -dot(vTriPosition, vTriPosition);
+			if(A < -4.0) discard;
+			float B = exp(A) * opacity;
+
 			//if(opacity < 1. / 255.) discard;
 
-			FragColor = vec4(outColor, opacity);
+			FragColor = vec4(outColor, B);
 			//FragColor = vec4(255.0, 59.0, 130.0, 1.0);
 		}
 	)";
@@ -348,9 +407,16 @@ int main()
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
 
+	GLfloat triangleVertices[] = {
+	-2.0f, -2.0f,
+	 2.0f, -2.0f,
+	 2.0f,  2.0f,
+	-2.0f,  2.0f
+	};
+
 	Sphere newSphere;
 
-	unsigned int VBO, VAO, EBO;
+	unsigned int VBO, VAO, EBO, triangleVBO;
 	//glGenBuffers(1, &EBO);
 
 	glGenVertexArrays(1, &VAO);
@@ -371,6 +437,15 @@ int main()
 
 	glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, stride, (void*)(sizeof(float) * 3));
 	glEnableVertexAttribArray(1);
+
+	glGenBuffers(1, &triangleVBO);
+	glBindBuffer(GL_ARRAY_BUFFER, triangleVBO);
+
+	glBufferData(GL_ARRAY_BUFFER, sizeof(triangleVertices), triangleVertices, GL_STATIC_DRAW);
+
+	GLint a_position = glGetAttribLocation(shaderProgram, "triPosition");
+	glEnableVertexAttribArray(a_position);
+	glVertexAttribPointer(a_position, 2, GL_FLOAT, GL_FALSE, 0, (void*)0);
 
 
 	//glBindVertexArray(0);
@@ -455,7 +530,7 @@ int main()
 
 	// Unbind the VBO and VAO
 	glBindVertexArray(0);
-	//glBindBuffer(GL_ARRAY_BUFFER, 0);
+	glBindBuffer(GL_ARRAY_BUFFER, 0);
 	//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
 
 	//glEnable(GL_DEPTH_TEST);
@@ -509,11 +584,14 @@ int main()
 
 			model = glm::translate(model, glm::vec3(point.x, point.y, point.z));
 
-			model = glm::scale(model, glm::vec3(exp(point.scale_0), exp(point.scale_1), exp(point.scale_2)));
+			//model = glm::scale(model, glm::vec3(exp(point.scale_0), exp(point.scale_1), exp(point.scale_2)));
+			//model = glm::scale(model, glm::vec3(log(point.scale_0), log(point.scale_1), log(point.scale_2)));
+
+			model = glm::scale(model, glm::vec3(expScales[sortedIdx[i]].x, expScales[sortedIdx[i]].y, expScales[sortedIdx[i]].z));
 
 			//glm::quat rotation = glm::quat(point.rot_3, point.rot_0, point.rot_1, point.rot_2);
-			//glm::quat rotation = glm::quat(newRots[sortedIdx[i]].w, newRots[sortedIdx[i]].x, newRots[sortedIdx[i]].y, newRots[sortedIdx[i]].z);
-			glm::quat rotation = glm::quat(newRots[sortedIdx[i]].x, newRots[sortedIdx[i]].y, newRots[sortedIdx[i]].z, newRots[sortedIdx[i]].w);
+			//glm::quat rotation = glm::quat(normRots[sortedIdx[i]].w, normRots[sortedIdx[i]].x, normRots[sortedIdx[i]].y, normRots[sortedIdx[i]].z);
+			glm::quat rotation = glm::quat(normRots[sortedIdx[i]].x, normRots[sortedIdx[i]].y, normRots[sortedIdx[i]].z, normRots[sortedIdx[i]].w);
 			model *= glm::mat4_cast(rotation);
 
 			unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
