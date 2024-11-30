@@ -78,6 +78,9 @@ std::vector<float> viewDepth(numInstancesCount);
 std::vector<glm::vec4> normRots;
 std::vector<glm::vec3> expScales;
 
+std::vector<std::vector<float>> cov3D;
+std::vector<glm::mat3> Vrks;
+
 std::vector<glm::vec4> calculateRotationNorms(const std::vector<glm::vec4>& rots) {
 	std::vector<glm::vec4> norms;
 	norms.reserve(rots.size());
@@ -131,10 +134,50 @@ void logRotations(std::vector<glm::vec4>& newRots) {
 	std::cout << "Max Value: (" << maxVec.x << ", " << maxVec.y << ", " << maxVec.z << ", " << maxVec.w << ")" << std::endl;
 };
 
-void computeSigma(glm::vec4& rots, glm::vec3& scales) {
-	glm::mat3 mMatrix(1.0f);
+std::vector<float> computeCov3D(glm::vec4& rots, glm::vec3& scales) {
 
-	glm::vec3 firstRow = glm::vec3();
+	glm::vec3 firstRow = glm::vec3(
+		1.f - 2.f * (rots.z * rots.z + rots.w * rots.w), // First element of row 0
+		2.f * (rots.y * rots.z - rots.x * rots.w),       // Second element of row 0
+		2.f * (rots.y * rots.w + rots.x * rots.z)        // Third element of row 0
+	);
+
+	glm::vec3 secondRow = glm::vec3(
+		2.f * (rots.y * rots.z + rots.x * rots.w),       // First element of row 1
+		1.f - 2.f * (rots.y * rots.y + rots.w * rots.w), // Second element of row 1
+		2.f * (rots.z * rots.w - rots.x * rots.y)        // Third element of row 1
+	);
+
+	glm::vec3 thirdRow = glm::vec3(
+		2.f * (rots.y * rots.w - rots.x * rots.z),       // First element of row 2
+		2.f * (rots.z * rots.w + rots.x * rots.y),       // Second element of row 2
+		1.f - 2.f * (rots.y * rots.y + rots.z * rots.z)  // Third element of row 2
+	);
+
+	glm::mat3 mMatrix = glm::mat3(
+		scales.x * glm::vec3(firstRow.x, secondRow.x, thirdRow.x),
+		scales.y * glm::vec3(firstRow.y, secondRow.y, thirdRow.y),
+		scales.z * glm::vec3(firstRow.z, secondRow.z, thirdRow.z)
+	);
+
+	glm::mat3 sigma = glm::transpose(mMatrix) * mMatrix;
+	std::vector<float> temp_cov3d;
+	temp_cov3d.push_back(sigma[0][0]);
+	temp_cov3d.push_back(sigma[0][1]);
+	temp_cov3d.push_back(sigma[0][2]);
+	temp_cov3d.push_back(sigma[1][1]);
+	temp_cov3d.push_back(sigma[1][2]);
+	temp_cov3d.push_back(sigma[2][2]);
+	
+	glm::mat3 t_Vrk = glm::mat3(
+		temp_cov3d[0], temp_cov3d[1], temp_cov3d[2],
+		temp_cov3d[1], temp_cov3d[2], temp_cov3d[4],
+		temp_cov3d[2], temp_cov3d[4], temp_cov3d[5]
+	);
+
+	Vrks.push_back(t_Vrk);
+
+	return temp_cov3d;
 };
 
 void performPrecalculations(const auto& cloud) {
@@ -144,6 +187,10 @@ void performPrecalculations(const auto& cloud) {
 		glm::vec4 rotations = glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3);
 		normRots.push_back(normalizeRotation(rotations));
 		expScales.push_back(glm::vec3(exp(point.scale_0), exp(point.scale_1), exp(point.scale_2)));
+
+		const auto& lastRotation = normRots.back();
+		const auto& lastScale = expScales.back();
+		cov3D.push_back(computeCov3D(lastRotation, lastScale));
 	}
 
 	logRotations(normRots);
