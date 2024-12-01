@@ -1,3 +1,0 @@
-C:/Users/JTSte/source/repos/GaussianRenderer/out/build/x64-debug/CMakeFiles/GaussianRenderer.dir
-C:/Users/JTSte/source/repos/GaussianRenderer/out/build/x64-debug/CMakeFiles/edit_cache.dir
-C:/Users/JTSte/source/repos/GaussianRenderer/out/build/x64-debug/CMakeFiles/rebuild_cache.dir
