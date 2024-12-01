@@ -333,7 +333,7 @@ float sigmoid(float opacity) {
 
 // Function to compute the score for each vertex
 double computeScore(const glm::vec3& scales_test_i,  const float& opacity) {
-	double expSum = -std::exp(scales_test_i.x + scales_test_i.y + scales_test_i.z);
+	double expSum = scales_test_i.x + scales_test_i.y + scales_test_i.z;
 	double denom = 1 + std::exp(-opacity);
 	return expSum / denom; // Negating to mimic the negative sign in the formula
 }
@@ -767,11 +767,22 @@ int main()
 	//glCullFace(GL_BACK);
 	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
-	//glDisable(GL_DEPTH_TEST);
+	glDisable(GL_DEPTH_TEST);
 
 	//glDisable(GL_CULL_FACE);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+
+	/*
+	glBlendFuncSeparate(
+		GL_ONE_MINUS_DST_ALPHA,
+		GL_ONE,
+		GL_ONE_MINUS_DST_ALPHA,
+		GL_ONE
+	);
+
+	glBlendEquationSeparate(GL_FUNC_ADD, GL_FUNC_ADD);
+	*/
 
 	//glDepthMask(GL_FALSE);
 
@@ -787,7 +798,7 @@ int main()
 
 		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 		//glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT);
 
 		//glm::mat4 model = glm::mat4(1.0f); // Initialize identity matrix
 		glm::mat4 view = glm::mat4(1.0f);
@@ -800,7 +811,7 @@ int main()
 			0.0, 0.0, 0.0, 1.0   // Column 4
 		);
 
-		projection = glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.2f, 200.f);
+		projection = glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.f);
 		//printMat4(projection);
 		unsigned int projLoc = glGetUniformLocation(shaderProgram, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
