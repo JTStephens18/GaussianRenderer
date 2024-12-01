@@ -95,39 +95,10 @@ std::vector<glm::vec3> origScales;
 std::vector<std::vector<float>> cov3D;
 std::vector<glm::mat3> Vrks;
 
-std::vector<glm::vec4> calculateRotationNorms(const std::vector<glm::vec4>& rots) {
-	std::vector<glm::vec4> norms;
-	norms.reserve(rots.size());
-
-	for (const auto& vec : rots) {
-		float norm = glm::length(vec) + 1e-9f;
-		glm::vec4 normVec = vec / norm;
-		norms.push_back(normVec);
-	}
-	return norms;
-}
-
 glm::vec4 normalizeRotation(glm::vec4& rot) {
 	float sumOfSqaures = rot.x * rot.x + rot.y * rot.y + rot.z * rot.z + rot.w * rot.w;
 	float normalizedVal = std::sqrt(sumOfSqaures);
 	return glm::vec4(rot.w / normalizedVal, rot.x / normalizedVal, rot.y / normalizedVal, rot.z / normalizedVal);
-	/*
-	return glm::vec4(
-		glm::clamp((rot.x / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f),
-		glm::clamp((rot.y / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f),
-		glm::clamp((rot.z / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f),
-		glm::clamp((rot.w / normalizedVal) * 128.0f + 128.0f, 0.0f, 255.0f)
-	);
-	*/
-
-	/*
-	glm::vec4(
-		glm::clamp(((rot.x / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f),
-		glm::clamp(((rot.y / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f),
-		glm::clamp(((rot.z / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f),
-		glm::clamp(((rot.w / normalizedVal) - 128.0f) / 128.0f, 0.0f, 255.0f)
-	);
-	*/
 };
 
 void logRotations(std::vector<glm::vec4>& newRots) {
@@ -212,14 +183,6 @@ void computeCov3D(glm::vec4& rots, glm::vec3& scales) {
 		scales.y * glm::vec3(firstRow.y, secondRow.y, thirdRow.y),
 		scales.z * glm::vec3(firstRow.z, secondRow.z, thirdRow.z)
 	);
-	
-	/*
-	glm::mat3 mMatrix = glm::mat3(
-		scales.x * firstRow,
-		scales.y * secondRow,
-		scales.z * thirdRow
-	);
-	*/
 
 	glm::mat3 sigma = glm::transpose(mMatrix) * mMatrix;
 	std::vector<float> temp_cov3d;
@@ -237,8 +200,6 @@ void computeCov3D(glm::vec4& rots, glm::vec3& scales) {
 	);
 
 	Vrks.push_back(t_Vrk);
-
-	//return temp_cov3d;
 };
 
 void performPrecalculations(const auto& cloud) {
@@ -328,7 +289,6 @@ glm::vec3 SH2RGB(glm::vec3 colors) {
 
 float sigmoid(float opacity) {
 	return 1.0 / (1.0 + std::exp(-opacity));
-	//return 255.0 / std::exp(-opacity) + 1.0;
 }
 
 // Function to compute the score for each vertex
@@ -431,6 +391,7 @@ int main()
 	);
 
 	printMat4(viewMat);
+	//printMat3(glm::transpose(glm::mat3(viewMat)));
 
 	GaussianData& point = cloud->points[0];
 
@@ -464,7 +425,6 @@ int main()
 		#version 330 core
 		layout (location = 0) in vec3 aPos;
 
-		uniform mat4 model;
 		uniform mat4 view;
 		uniform mat4 projection;
 		uniform vec3 u_Color;
@@ -475,21 +435,19 @@ int main()
 		uniform mat3 Vrk;
 		uniform vec2 viewport;
 		uniform vec3 hfov_focal;
+	
+		uniform vec2 widthHeight;
 
 		in vec2 triPosition;
 
 		out vec3 fragPos;
 		out vec3 outColor;
-		//out vec3 normal;
 		out float opacity;
 		out vec2 vTriPosition;
+		out vec2 uv;
 
 		out vec3 conic;
 		out vec2 coordxy;
-
-		vec3 applyQuaternion(vec3 v, vec4 q) {
-			return v + 2.0 * cross(q.xyz, cross(q.xyz, v) + q.w * v);
-		};
 
 		void main() {
 
@@ -508,19 +466,22 @@ int main()
 
 			float clip = 1.2 * pos2d.w;
 			if (pos2d.z < -clip || pos2d.x < -clip || pos2d.x > clip || pos2d.y < -clip || pos2d.y > clip) {
-				gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
-				return;
+				//gl_Position = vec4(0.0, 0.0, 2.0, 1.0);
+				//return;
 			}
 
 			mat3 J = mat3(
 				focal.x / cam.z, 0., -(focal.x * cam.x) / (cam.z * cam.z),
-				0., focal.y / cam.z, (focal.y * cam.y) / (cam.z * cam.z),
+				0., focal.y / cam.z, -(focal.y * cam.y) / (cam.z * cam.z),
 				0., 0., 0.
 			);
 
 			mat3 T = transpose(mat3(view)) * J;
 	
-			mat3 cov2d = transpose(T) * Vrk * T;
+			mat3 cov2d = transpose(T) * transpose(Vrk) * T;
+
+			cov2d[0][0] += 0.3f;
+			cov2d[1][1] += 0.3f; 
 
 			float det = (cov2d[0][0] * cov2d[1][1] - cov2d[0][1] * cov2d[0][1]);
 			//if (det == 0.0f)
@@ -535,26 +496,41 @@ int main()
 			coordxy = aPos.xy * quadwh_scr;
 			//gl_Position = pos2d;
 
-			float mid = (cov2d[0][0] + cov2d[1][1]) / 2.0;
-			float radius = length(vec2((cov2d[0][0] - cov2d[1][1]) / 2.0, cov2d[0][1]));
-			float lambda1 = mid + radius, lambda2 = mid - radius;
 
-			if(lambda2 < 0.0) return;
-			vec2 diagonalVector = normalize(vec2(cov2d[0][1], lambda1 - cov2d[0][0]));
-			vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
-			vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
+			float mid = 0.5f * (cov2d[0][0] + cov2d[1][1]);
+			float lambda1 = mid + sqrt(max(0.1, mid * mid - det));
+			float lambda2 = mid - sqrt(max(0.1, mid * mid - det));
 
-			vec2 vCenter = vec2(pos2d) / pos2d.w;
+			
+			float radius_px = ceil(3.0f * sqrt(max(lambda1, lambda2)));
+			vec2 radius_ndc = vec2(radius_px / (widthHeight.y), radius_px / (widthHeight.x));
+
+			vec4 pos1 = pos2d / pos2d.w;
+
+			gl_Position = vec4(pos1.xy + 2 * radius_ndc * triPosition, pos1.zw);
+
+			uv = radius_px * triPosition;
+
+			//float mid = (cov2d[0][0] + cov2d[1][1]) / 2.0;
+			//float radius = length(vec2((cov2d[0][0] - cov2d[1][1]) / 2.0, cov2d[0][1]));
+			//float lambda1 = mid + radius, lambda2 = mid - radius;
+
+			//if(lambda2 < 0.0) return;
+			//vec2 diagonalVector = normalize(vec2(cov2d[0][1], lambda1 - cov2d[0][0]));
+			//vec2 majorAxis = min(sqrt(2.0 * lambda1), 1024.0) * diagonalVector;
+			//vec2 minorAxis = min(sqrt(2.0 * lambda2), 1024.0) * vec2(diagonalVector.y, -diagonalVector.x);
+
+			//vec2 vCenter = vec2(pos2d) / pos2d.w;
 
 			//gl_Position = vec4(vCenter + aPos.x * majorAxis / viewport + aPos.y * minorAxis / viewport, 0.0, 1.0);
-			gl_Position = vec4(vCenter + triPosition.x * majorAxis / viewport + triPosition.y * minorAxis / viewport, 0.0, 1.0);
+			//gl_Position = vec4(vCenter + triPosition.x * majorAxis / viewport + triPosition.y * minorAxis / viewport, 0.0, 1.0);
 
 			//gl_Position = projection * view * model * vec4(aPos, 1.0);
 			fragPos = aPos;
-			//outColor = u_Color;
-			outColor = clamp(pos2d.z / pos2d.w + 1.0, 0.0, 1.0) * vec3(u_Color);
-			opacity = clamp(pos2d.z / pos2d.w + 1.0, 0.0, 1.0) *  u_Opacity;
-			//opacity = u_Opacity;
+			outColor = u_Color;
+			//outColor = clamp(pos2d.z / pos2d.w + 1.0, 0.0, 1.0) * vec3(u_Color);
+			//opacity = clamp(pos2d.z / pos2d.w + 1.0, 0.0, 1.0) *  u_Opacity;
+			opacity = u_Opacity;
 			//vTriPosition = aPos.xy;
 			vTriPosition = triPosition;
 		}
@@ -570,15 +546,16 @@ int main()
 
 		in vec3 conic;
 		in vec2 coordxy;
+		in vec2 uv;
 
 		out vec4 FragColor;
 
 		uniform vec3 viewPos;
 
 		void main() {			
-			float A = -dot(vTriPosition, vTriPosition);
-			if(A < -4.0) discard;
-			float B = exp(A) * opacity;
+			//float A = -dot(vTriPosition, vTriPosition);
+			//if(A < -4.0) discard;
+			//float B = exp(A) * opacity;
 
 			//if(opacity < 1. / 255.) discard;
 
@@ -586,8 +563,14 @@ int main()
 			//if (A > 1.0) discard;
 			//float B = exp(-A * 4.0) * opacity;
 
-			FragColor = vec4(outColor, B);
+			//FragColor = vec4(outColor, B);
 			//FragColor = vec4(255.0, vTriPosition.x, vTriPosition.y, 1.0);
+
+			vec2 d = -uv;
+			float power = -0.5f * (conic.x * d.x * d.x + conic.z * d.y * d.y) + conic.y * d.x * d.y;
+			if(power > 0.0) discard;
+			float alpha = min(0.99, opacity * exp(power));
+			FragColor = vec4(outColor, alpha);
 		}
 	)";
 
@@ -628,6 +611,16 @@ int main()
 
 	glDeleteShader(vertexShader);
 	glDeleteShader(fragmentShader);
+
+	/*
+	GLfloat triangleVertices[] = {
+	-2.0f, -2.0f,
+	 2.0f, -2.0f,
+	 2.0f,  2.0f,
+	-2.0f,  2.0f
+	};
+	*/
+
 
 	GLfloat triangleVertices[] = {
 	-2.0f, -2.0f,
@@ -678,94 +671,10 @@ int main()
 
 
 	//glBindVertexArray(0);
-	/*
-	std::vector<float> instanceData;
-	instanceData.reserve(numInstances * 14); // pos(3) + scale(3) + rot(4) + color(3) + opacity(1)
-	//instanceData.reserve(numInstances * 14);
-
-	for (int i = 0; i < numInstances; ++i) {
-		const auto& point = cloud->points[sortedIdx[i]];
-
-		// Position
-		instanceData.push_back(point.x);
-		instanceData.push_back(point.y);
-		instanceData.push_back(point.z);
-		
-		// Scale
-		instanceData.push_back(point.scale_0);
-		instanceData.push_back(point.scale_1);
-		instanceData.push_back(point.scale_2);
-		
-		// Rotation (quaternion)
-
-		std::vector<glm::vec4> rots = {
-			glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3)
-		};
-
-		std::vector<glm::vec4> norms = calculateRotationNorms(rots);
-
-		for (const auto& normVec : norms) {
-			instanceData.push_back(normVec.x);
-			instanceData.push_back(normVec.y);
-			instanceData.push_back(normVec.z);
-			instanceData.push_back(normVec.w);
-		}
-
-		// Color (from f_dc components)
-		instanceData.push_back(point.f_dc_0);
-		instanceData.push_back(point.f_dc_1);
-		instanceData.push_back(point.f_dc_2);
-		
-		// Opacity
-		instanceData.push_back(point.opacity);
-	}
-
-
-	unsigned int instanceVBO;
-	glGenBuffers(1, &instanceVBO);
-
-	glBindVertexArray(VAO);
-
-	glBindBuffer(GL_ARRAY_BUFFER, instanceVBO);
-	glBufferData(GL_ARRAY_BUFFER, numInstances * sizeof(float) * 14, instanceData.data(), GL_STATIC_DRAW);
-
-	// Position
-	glEnableVertexAttribArray(2);
-	glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)0);
-
-	// Scale
-	glVertexAttribPointer(3, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(3 * sizeof(float)));
-	glEnableVertexAttribArray(3);
-
-	// Rotation
-	glVertexAttribPointer(4, 4, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(6 * sizeof(float)));
-	glEnableVertexAttribArray(4);
-
-	// Color 
-	glVertexAttribPointer(5, 3, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(10 * sizeof(float)));
-	glEnableVertexAttribArray(5);
-
-	// Opacity
-	glVertexAttribPointer(6, 1, GL_FLOAT, GL_FALSE, sizeof(float) * 14, (void*)(13 * sizeof(float)));
-	glEnableVertexAttribArray(6);
-
-	glVertexAttribDivisor(2, 1);
-	glVertexAttribDivisor(3, 1);
-	glVertexAttribDivisor(4, 1);
-	glVertexAttribDivisor(5, 1);
-	glVertexAttribDivisor(6, 1);
-
-	*/
 
 	// Unbind the VBO and VAO
 	glBindVertexArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
-	//glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-
-	//glEnable(GL_DEPTH_TEST);
-	//glEnable(GL_CULL_FACE);
-	//glCullFace(GL_BACK);
-	//glPolygonMode(GL_FRONT_AND_BACK, GL_LINE);
 
 	glDisable(GL_DEPTH_TEST);
 
@@ -800,56 +709,25 @@ int main()
 		//glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
 		glClear(GL_COLOR_BUFFER_BIT);
 
-		//glm::mat4 model = glm::mat4(1.0f); // Initialize identity matrix
 		glm::mat4 view = glm::mat4(1.0f);
 		glm::mat4 projection = glm::mat4(1.0f);
 
-		glm::mat4 defaultViewMatrix = glm::mat4(
-			0.47, -0.11, -0.88, 0.07, // Column 1
-			0.04, 0.99, -0.11, 0.03, // Column 2
-			0.88, 0.02, 0.47, 6.55, // Column 3
-			0.0, 0.0, 0.0, 1.0   // Column 4
-		);
-
 		projection = glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.f);
-		//printMat4(projection);
 		unsigned int projLoc = glGetUniformLocation(shaderProgram, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 
-		float radius = 10.0f;
-		float camX = static_cast<float>(sin(glfwGetTime()) * radius);
-		float camZ = static_cast<float>(cos(glfwGetTime()) * radius);
 		view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
 		unsigned int viewLoc = glGetUniformLocation(shaderProgram, "view");
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
 		glUniform2f(glGetUniformLocation(shaderProgram, "focal"), focal.x, focal.y);
+		glUniform2f(glGetUniformLocation(shaderProgram, "widthHeight"), SCREEN_WIDTH, SCREEN_HEIGHT);
 		glUniform3f(glGetUniformLocation(shaderProgram, "hfov_focal"), hfov_focal.x, hfov_focal.y, hfov_focal.z);
-
-		float angle = 20.0f;
-		//model = glm::rotate(model, glm::radians(angle), glm::vec3(1.0f, 0.3f, 0.5f));
 
 		for (int i = 0; i < numInstancesCount; ++i) {
 			const auto& point = cloud->points[sortedIdx[i]];
 			//const auto& point = cloud->points[newSortedIdx[i]];
-
-			glm::mat4 model = glm::mat4(1.0f);
-
-			model = glm::translate(model, glm::vec3(point.x, point.y, point.z));
-
-			//model = glm::scale(model, glm::vec3(exp(point.scale_0), exp(point.scale_1), exp(point.scale_2)));
-			//model = glm::scale(model, glm::vec3(log(point.scale_0), log(point.scale_1), log(point.scale_2)));
-
-			model = glm::scale(model, glm::vec3(expScales[sortedIdx[i]].x, expScales[sortedIdx[i]].y, expScales[sortedIdx[i]].z));
-
-			//glm::quat rotation = glm::quat(point.rot_3, point.rot_0, point.rot_1, point.rot_2);
-			//glm::quat rotation = glm::quat(normRots[sortedIdx[i]].w, normRots[sortedIdx[i]].x, normRots[sortedIdx[i]].y, normRots[sortedIdx[i]].z);
-			glm::quat rotation = glm::quat(normRots[sortedIdx[i]].x, normRots[sortedIdx[i]].y, normRots[sortedIdx[i]].z, normRots[sortedIdx[i]].w);
-			model *= glm::mat4_cast(rotation);
-
-			unsigned int modelLoc = glGetUniformLocation(shaderProgram, "model");
-			glUniformMatrix4fv(modelLoc, 1, GL_FALSE, glm::value_ptr(model));
 
 			glUniform2f(glGetUniformLocation(shaderProgram, "viewport"), SCREEN_WIDTH, SCREEN_HEIGHT);
 
