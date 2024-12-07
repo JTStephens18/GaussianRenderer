@@ -39,7 +39,7 @@ float yaw = -90.f;
 float pitch = 0.0f;
 float lastX = SCREEN_WIDTH / 2.0;
 float lastY = SCREEN_HEIGHT / 2.0;
-float fov = 45.0f;
+float fov = 90.0f;
 
 //float focal_x = SCREEN_WIDTH / (2 * tan(fov / 2));
 //float focal_y = SCREEN_WIDTH / (2 * tan(fov / 2));
@@ -48,6 +48,11 @@ float focal_x = 1.81066 * SCREEN_WIDTH;
 float focal_y = 2.41421 * SCREEN_HEIGHT;
 
 glm::vec2 focal = glm::vec2(focal_x, focal_y);
+
+float tanHalfFovX = 0.5 * SCREEN_WIDTH / focal_x;
+float tanHalfFovY = 0.5 * SCREEN_HEIGHT / focal_y;
+
+glm::vec2 tanHalfFov = glm::vec2(tanHalfFovX, tanHalfFovY);
 
 float deltaTime = 0.0f;
 float lastFrame = 0.0f;
@@ -98,7 +103,7 @@ std::vector<glm::mat3> Vrks;
 glm::vec4 normalizeRotation(glm::vec4& rot) {
 	float sumOfSqaures = rot.x * rot.x + rot.y * rot.y + rot.z * rot.z + rot.w * rot.w;
 	float normalizedVal = std::sqrt(sumOfSqaures);
-	return glm::vec4(rot.w / normalizedVal, rot.x / normalizedVal, rot.y / normalizedVal, rot.z / normalizedVal);
+	return glm::vec4(rot.x / normalizedVal, rot.y / normalizedVal, rot.z / normalizedVal, rot.w / normalizedVal);
 };
 
 void logRotations(std::vector<glm::vec4>& newRots) {
@@ -130,8 +135,8 @@ void printMat4(const glm::mat4& mat) {
 	std::cout << "**** end ****" << std::endl;
 };
 
-void printMat3(const glm::mat3& mat) {
-	std::cout << "** Begin mat3 **" << std::endl;
+void printMat3(const glm::mat3& mat, const std::string& message) {
+	std::cout << message << " * Begin mat3 ** " << std::endl;
 	const float* elements = glm::value_ptr(mat); // Get raw pointer to matrix elements
 	for (int i = 0; i < 3; ++i) { // Row
 		for (int j = 0; j < 3; ++j) { // Column
@@ -178,13 +183,46 @@ void computeCov3D(glm::vec4& rots, glm::vec3& scales) {
 	);
 
 	
+	glm::mat scaleMatrix = glm::mat3(
+		scales.x, 0, 0, 
+		0, scales.y, 0,
+		0, 0, scales.z
+	);
+
+	/*
+	glm::mat3 rotMatrix = glm::mat3(
+		glm::vec3(firstRow.x, secondRow.x, thirdRow.x),
+		glm::vec3(firstRow.y, secondRow.y, thirdRow.y),
+		glm::vec3(firstRow.z, secondRow.z, thirdRow.z)
+	);
+	*/
+
+	/*
+	glm::mat3 rotMatrix = glm::mat3(
+		glm::vec3(firstRow.x, firstRow.y, firstRow.z),
+		glm::vec3(secondRow.x, secondRow.y, secondRow.y),
+		glm::vec3(thirdRow.z, thirdRow.z, thirdRow.z),
+	);
+	*/
+
+	glm::mat3 rotMatrix = glm::mat3(
+		firstRow,
+		secondRow,
+		thirdRow
+	);
+
 	glm::mat3 mMatrix = glm::mat3(
 		scales.x * glm::vec3(firstRow.x, secondRow.x, thirdRow.x),
 		scales.y * glm::vec3(firstRow.y, secondRow.y, thirdRow.y),
 		scales.z * glm::vec3(firstRow.z, secondRow.z, thirdRow.z)
 	);
 
-	glm::mat3 sigma = glm::transpose(mMatrix) * mMatrix;
+	glm::mat3 modMatrix = scaleMatrix * rotMatrix;
+
+	//printMat3(mMatrix, "mMatrix");
+	//printMat3(modMatrix, "modMatrix");
+
+	glm::mat3 sigma = glm::transpose(modMatrix) * modMatrix;
 	std::vector<float> temp_cov3d;
 	temp_cov3d.push_back(sigma[0][0]);
 	temp_cov3d.push_back(sigma[0][1]);
@@ -214,8 +252,9 @@ void performPrecalculations(const auto& cloud) {
 		origScales.push_back(glm::vec3(point.scale_0, point.scale_1, point.scale_2));
 
 		glm::vec4 lastRotation = normRots.back();
-		//glm::vec4& lastRotation = unNormRots.back();
+		//glm::vec4 lastRotation = unNormRots.back();
 		glm::vec3 lastScale = expScales.back();
+		//glm::vec3 lastScale = origScales.back();
 		//cov3D.push_back(computeCov3D(lastRotation, lastScale));
 		computeCov3D(lastRotation, lastScale);
 	};
@@ -288,7 +327,7 @@ glm::vec3 SH2RGB(glm::vec3 colors) {
 };
 
 float sigmoid(float opacity) {
-	return 1.0 / (1.0 + std::exp(-opacity));
+		return 1.0 / (1.0 + std::exp(-opacity));
 }
 
 // Function to compute the score for each vertex
@@ -357,8 +396,15 @@ int main()
 	// Create a PointCloud with the custom point type
 	pcl::PointCloud<GaussianData>::Ptr cloud(new pcl::PointCloud<GaussianData>);
 
+	const std::string basepath = "C:/Users/JTSte/Downloads";
+	const std::string filepath = basepath + "/02880940/02880940-5bb12905529c85359d3d767e1bc88d65.ply";
+	//const std::string filepath = basepath + "/02843684/02843684-9fe2e8fb0e94a179b9e8bdc9c4a49aa2.ply";
+	//const std::string filepath = basepath + "/point_cloud.ply";
+
+	std::cout << "file path " << filepath << std::endl;
+
 	// Load the PLY file into the cloud
-	if (pcl::io::loadPLYFile<GaussianData>("C:/Users/JTSte/Downloads/02880940/02880940-5bb12905529c85359d3d767e1bc88d65.ply", *cloud) == -1) {  // Load PLY file
+	if (pcl::io::loadPLYFile<GaussianData>(filepath, *cloud) == -1) {  // Load PLY file
 		std::cerr << "Failed to load .ply file " << std::endl;
 		return -1;
 	}
@@ -378,7 +424,13 @@ int main()
 		std::cout << "First point rotation values: "
 			<< point.rot_0 << ", " << point.rot_1 << ", " << point.rot_2 << ", " << point.rot_3 << std::endl;
 		std::cout << "First point color values: "
-			<< point.f_dc_0 << ", " << point.f_dc_0 << ", " << point.f_dc_0 << ", "  << std::endl;
+			<< point.f_dc_0 << ", " << point.f_dc_0 << ", " << point.f_dc_0 << ", " << std::endl;
+
+		glm::vec4 tempRots = glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3);
+		glm::vec4 tempNormRots = normalizeRotation(tempRots);
+
+		std::cout << "First point norm rotation values: "
+			<< tempNormRots.x << ", " << tempNormRots.y << ", " << tempNormRots.z << ", " << tempNormRots.w << std::endl;
 	};
 
 	performPrecalculations(cloud);
@@ -401,13 +453,15 @@ int main()
 
 	std::cout << "Cam values " << cam.x << ", " << cam.y << ", " << cam.z << ", " << cam.w << std::endl;
 
-	float htany = tan(fov / 2);
+	float htany = tan(glm::radians(fov) / 2);
 	float htanx = htany / SCREEN_HEIGHT * SCREEN_WIDTH;
 	float focal_z = SCREEN_HEIGHT / (2 * htany);
 
 	glm::vec3 hfov_focal = glm::vec3(htanx, htany, focal_z);
 
 	sortedIdx = radixSort(cloud, viewMat);
+
+	//return 0;
 
 	std::cout << "View depth sorted idx val " << viewDepth[sortedIdx[0]] << std::endl;
 
@@ -435,6 +489,7 @@ int main()
 		uniform mat3 Vrk;
 		uniform vec2 viewport;
 		uniform vec3 hfov_focal;
+		uniform vec2 tanHalfFov;
 	
 		uniform vec2 widthHeight;
 
@@ -456,12 +511,24 @@ int main()
 
 			vec2 wh = 2 * hfov_focal.xy * hfov_focal.z;
 
-			//pos2d.xyz = pos2d.xyz / pos2d.w;
-			//pos2d.w = 1.f;
+			//float limx = 1.3 * tanHalfFov.x;
+			//float limy = 1.3 * tanHalfFov.y;
+
+			float limx = 1.3 * hfov_focal.x;
+			float limy = 1.3 * hfov_focal.y;
+
+			float txtz = cam.x / cam.z;
+			float tytz = cam.y / cam.z;
+
+			float tx = min(limx, max(-limx, txtz)) * cam.z;
+			float ty = min(limy, max(-limy, tytz)) * cam.z; 
+
+			pos2d.xyz = pos2d.xyz / pos2d.w;
+			pos2d.w = 1.f;
 
 			if (any(greaterThan(abs(pos2d.xyz), vec3(1.3)))) {
-				//gl_Position = vec4(-100, -100, -100, 1);
-				//return;	
+				gl_Position = vec4(-100, -100, -100, 1);
+				return;	
 			}
 
 			float clip = 1.2 * pos2d.w;
@@ -470,9 +537,21 @@ int main()
 				//return;
 			}
 
+			//mat3 J = mat3(
+			//	focal.x / cam.z, 0., -(focal.x * cam.x) / (cam.z * cam.z),
+			//	0., focal.y / cam.z, -(focal.y * cam.y) / (cam.z * cam.z),
+			//	0., 0., 0.
+			//);
+
+			//mat3 J = mat3(
+				//focal.x / cam.z, 0., -(focal.x * tx) / (cam.z * cam.z),
+				//0., focal.y / cam.z, -(focal.y * ty) / (cam.z * cam.z),
+				//0., 0., 0.
+			//);
+
 			mat3 J = mat3(
-				focal.x / cam.z, 0., -(focal.x * cam.x) / (cam.z * cam.z),
-				0., focal.y / cam.z, -(focal.y * cam.y) / (cam.z * cam.z),
+				hfov_focal.z / cam.z, 0., -(hfov_focal.z * tx) / (cam.z * cam.z),
+				0., hfov_focal.z / cam.z, -(hfov_focal.z * ty) / (cam.z * cam.z),
 				0., 0., 0.
 			);
 
@@ -484,17 +563,17 @@ int main()
 			cov2d[1][1] += 0.3f; 
 
 			float det = (cov2d[0][0] * cov2d[1][1] - cov2d[0][1] * cov2d[0][1]);
-			//if (det == 0.0f)
-				//gl_Position = vec4(0.f, 0.f, 0.f, 0.f);
+			if (det == 0.0f)
+				gl_Position = vec4(0.f, 0.f, 0.f, 0.f);
 
 			float det_inv = 1.f / det;
 			conic = vec3(cov2d[1][1] * det_inv, -cov2d[0][1] * det_inv, cov2d[0][0] * det_inv);
 
-			vec2 quadwh_scr = vec2(3.f * sqrt(cov2d[0][0]), 3.f * (cov2d[1][1]));
+			vec2 quadwh_scr = vec2(3.f * sqrt(cov2d[0][0]), 3.f * sqrt(cov2d[1][1]));
 			vec2 quadwh_ndc = quadwh_scr / wh * 2;
-			//pos2d.xy = pos2d.xy + aPos.xy * quadwh_ndc;
-			coordxy = aPos.xy * quadwh_scr;
-			//gl_Position = pos2d;
+			pos2d.xy = pos2d.xy + triPosition.xy * quadwh_ndc;
+			coordxy = triPosition * quadwh_scr;
+			gl_Position = pos2d;
 
 
 			float mid = 0.5f * (cov2d[0][0] + cov2d[1][1]);
@@ -507,7 +586,7 @@ int main()
 
 			vec4 pos1 = pos2d / pos2d.w;
 
-			gl_Position = vec4(pos1.xy + 2 * radius_ndc * triPosition, pos1.zw);
+			//gl_Position = vec4(pos1.xy + 2 * radius_ndc * triPosition, pos1.zw);
 
 			uv = radius_px * triPosition;
 
@@ -566,10 +645,12 @@ int main()
 			//FragColor = vec4(outColor, B);
 			//FragColor = vec4(255.0, vTriPosition.x, vTriPosition.y, 1.0);
 
-			vec2 d = -uv;
+			//vec2 d = -uv;
+			vec2 d = coordxy;
 			float power = -0.5f * (conic.x * d.x * d.x + conic.z * d.y * d.y) + conic.y * d.x * d.y;
 			if(power > 0.0) discard;
 			float alpha = min(0.99, opacity * exp(power));
+			if(alpha < 1.f / 255.f) discard;
 			FragColor = vec4(outColor, alpha);
 		}
 	)";
@@ -620,14 +701,18 @@ int main()
 	-2.0f,  2.0f
 	};
 	*/
-
-
+	
+	
 	GLfloat triangleVertices[] = {
-	-2.0f, -2.0f,
-	 2.0f, -2.0f,
-	 2.0f,  2.0f,
-	-2.0f,  2.0f
+		-1.0, 1.0,
+		-1.0, 1.0,
+		1.0, -1.0,
+		1.0, 1.0,
+		-1.0, 1.0,
+		1.0, -1.0
 	};
+	
+	
 
 	Sphere newSphere;
 
@@ -676,9 +761,9 @@ int main()
 	glBindVertexArray(0);
 	glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-	glDisable(GL_DEPTH_TEST);
+	//glDisable(GL_DEPTH_TEST);
 
-	//glDisable(GL_CULL_FACE);
+	glDisable(GL_CULL_FACE);
 	glEnable(GL_BLEND);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
@@ -707,7 +792,7 @@ int main()
 
 		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 		//glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
 		glm::mat4 view = glm::mat4(1.0f);
 		glm::mat4 projection = glm::mat4(1.0f);
@@ -715,6 +800,7 @@ int main()
 		projection = glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.f);
 		unsigned int projLoc = glGetUniformLocation(shaderProgram, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
+		//glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projMatrix));
 
 		view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
 
@@ -722,6 +808,7 @@ int main()
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
 
 		glUniform2f(glGetUniformLocation(shaderProgram, "focal"), focal.x, focal.y);
+		glUniform2f(glGetUniformLocation(shaderProgram, "tanHalfFov"), tanHalfFovX, tanHalfFovY);
 		glUniform2f(glGetUniformLocation(shaderProgram, "widthHeight"), SCREEN_WIDTH, SCREEN_HEIGHT);
 		glUniform3f(glGetUniformLocation(shaderProgram, "hfov_focal"), hfov_focal.x, hfov_focal.y, hfov_focal.z);
 
@@ -744,7 +831,8 @@ int main()
 			//glDrawElements(GL_TRIANGLES, newSphere.getIndexCount(), GL_UNSIGNED_INT, (void*)0);
 
 			glBindVertexArray(triangleVAO);
-			glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+			//glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+			glDrawArrays(GL_TRIANGLES, 0, 6);
 			glBindVertexArray(0);
 		};
 		/*
