@@ -23,16 +23,21 @@ void processInput(GLFWwindow* window, auto& cloud);
 
 // TODO: Update width and height on screen resize
 
-const unsigned int SCREEN_WIDTH = 800;
-const unsigned int SCREEN_HEIGHT = 600;
+//const unsigned int SCREEN_WIDTH = 800;
+//const unsigned int SCREEN_HEIGHT = 600;
+
+const unsigned int SCREEN_WIDTH = 1280;
+const unsigned int SCREEN_HEIGHT = 720;
 
 unsigned int numInstancesCount = 14598;
 
 glm::vec3 cameraPos = glm::vec3(0.0f, 0.0f, 3.0f);
 glm::vec3 cameraFront = glm::vec3(0.0f, 0.0f, -1.0f);
-//glm::vec3 cameraPos = glm::vec3(-321.6, -40.0f, 5355.0f);
-//glm::vec3 cameraFront = glm::vec3(9.33f, -3.11f, -252.0f);
 glm::vec3 cameraUp = glm::vec3(0.0f, 1.0f, 0.0f);
+
+glm::vec3 position = glm::vec3(0.0f, 0.0f, 3.0f);
+glm::vec3 target = glm::vec3(0.0f, 0.0f, 0.0f);
+glm::vec3 up = glm::vec3(0.0f, -1.0f, 0.0f);
 
 bool firstMouse = true;
 float yaw = -90.f;
@@ -44,8 +49,11 @@ float fov = 90.0f;
 //float focal_x = SCREEN_WIDTH / (2 * tan(fov / 2));
 //float focal_y = SCREEN_WIDTH / (2 * tan(fov / 2));
 
-float focal_x = 1.81066 * SCREEN_WIDTH;
-float focal_y = 2.41421 * SCREEN_HEIGHT;
+//float focal_x = 1.81066 * SCREEN_WIDTH;
+//float focal_y = 2.41421 * SCREEN_HEIGHT;
+
+float focal_x = 0.75 * SCREEN_WIDTH;
+float focal_y = 1.0 * SCREEN_HEIGHT;
 
 glm::vec2 focal = glm::vec2(focal_x, focal_y);
 
@@ -59,6 +67,7 @@ float lastFrame = 0.0f;
 
 std::vector<size_t> sortedIdx;
 std::vector<int> newSortedIdx;
+std::vector<int> gausIdx;
 const float C0 = 0.28209479177387814f;
 
 
@@ -162,7 +171,7 @@ glm::mat4 calculateProjectionMatrix(float& fx, float& fy, const unsigned int& wi
 	return projectionMatrix;
 }
 
-void computeCov3D(glm::vec4& rots, glm::vec3& scales) {
+glm::mat3 computeCov3D(glm::vec4& rots, glm::vec3& scales) {
 
 	glm::vec3 firstRow = glm::vec3(
 		1.f - 2.f * (rots.z * rots.z + rots.w * rots.w), // First element of row 0
@@ -237,8 +246,46 @@ void computeCov3D(glm::vec4& rots, glm::vec3& scales) {
 		temp_cov3d[2], temp_cov3d[4], temp_cov3d[5]
 	);
 
-	Vrks.push_back(t_Vrk);
+	//Vrks.push_back(t_Vrk);
+	//Vrks.push_back(sigma);
+	//return t_Vrk;
+	return sigma;
 };
+
+void computeCov2d(const glm::mat3& viewMat, const glm::vec4& cam, const glm::vec3& hfov) {
+
+	//glm::vec2 wh = 2.0f * hfov.xy * hfov.z;
+
+	float limx = 1.3f * hfov.x;
+	float limy = 1.3f * hfov.y;
+
+	float txtz = cam.x / cam.z;
+	float tytz = cam.y / cam.z;
+
+	float tx = std::min(limx, std::max(-limx, txtz)) * cam.z;
+	float ty = std::min(limy, std::max(-limy, tytz)) * cam.z;
+
+	std::cout << "TX " << tx << std::endl;
+	std::cout << "TY " << ty << std::endl;
+
+	std::cout << "Cam z " << cam.z << std::endl;
+	std::cout << "Hfov z " << hfov.z << std::endl;
+
+	glm::mat3 J = glm::mat3(
+		hfov.z / cam.z, 0., -(hfov.z * tx) / (cam.z * cam.z),
+		0., hfov.z / cam.z, -(hfov.z * ty) / (cam.z * cam.z),
+		0., 0., 0.
+	);
+	printMat3(J, "J");
+
+	//glm::mat3 T = glm::transpose(viewMat) * J;
+	glm::mat3 T = viewMat * J;
+
+	printMat3(T, "T");
+
+	glm::mat3 cov2d = glm::transpose(T) * glm::transpose(Vrks[0]) * T;
+	printMat3(cov2d, "COV2D");
+}
 
 void performPrecalculations(const auto& cloud) {
 	normRots.clear();
@@ -256,7 +303,7 @@ void performPrecalculations(const auto& cloud) {
 		glm::vec3 lastScale = expScales.back();
 		//glm::vec3 lastScale = origScales.back();
 		//cov3D.push_back(computeCov3D(lastRotation, lastScale));
-		computeCov3D(lastRotation, lastScale);
+		Vrks.push_back(computeCov3D(lastRotation, lastScale));
 	};
 
 	logRotations(normRots);
@@ -360,6 +407,32 @@ std::vector<int> argsort(const std::vector<glm::vec3>& scales_test, const std::v
 	return indices;
 }
 
+std::vector<int> sortGaussians(const auto& splatCloud, const glm::mat3& viewMat) {
+	std::vector<std::pair<float, int>> depthIndex;
+	size_t count = 0;
+	for (const auto& point : splatCloud->points) {
+
+		const glm::vec3 xyz = glm::vec3(point.x, point.y, point.z);
+		glm::vec3 xyzView = viewMat * xyz;
+
+		float depth = xyzView.z;
+
+		depthIndex.emplace_back(depth, static_cast<int>(count));
+		++count;
+	}
+
+	std::sort(depthIndex.begin(), depthIndex.end(), [](const std::pair<float, int>& a, const std::pair<float, int>& b) {
+		return a.first < b.first;
+		});
+
+	std::vector<int> sortedIndices;
+	sortedIndices.reserve(depthIndex.size());
+	for (const auto& pair : depthIndex) {
+		sortedIndices.push_back(pair.second);
+	}
+	return sortedIndices;
+}
+
 
 int main()
 {
@@ -424,32 +497,53 @@ int main()
 		std::cout << "First point rotation values: "
 			<< point.rot_0 << ", " << point.rot_1 << ", " << point.rot_2 << ", " << point.rot_3 << std::endl;
 		std::cout << "First point color values: "
-			<< point.f_dc_0 << ", " << point.f_dc_0 << ", " << point.f_dc_0 << ", " << std::endl;
-
+			<< point.f_dc_0 << ", " << point.f_dc_1 << ", " << point.f_dc_2 << ", " << std::endl;
+		
 		glm::vec4 tempRots = glm::vec4(point.rot_0, point.rot_1, point.rot_2, point.rot_3);
 		glm::vec4 tempNormRots = normalizeRotation(tempRots);
 
 		std::cout << "First point norm rotation values: "
 			<< tempNormRots.x << ", " << tempNormRots.y << ", " << tempNormRots.z << ", " << tempNormRots.w << std::endl;
+
+		glm::vec3 tExpScales = glm::exp(glm::vec3(point.scale_0, point.scale_1, point.scale_2));
+
+		std::cout << "First point exp scales " << tExpScales.x << ", " << tExpScales.y << ", " << tExpScales.z << std::endl;
 	};
 
 	performPrecalculations(cloud);
 
+	glm::mat3 cov3d = Vrks[0];
+	printMat3(cov3d, "VRKs");
+
+	glm::vec4 tRot = glm::vec4(1.0, 2.0, 3.0, 4.0);
+	glm::vec3 tScale = glm::vec3(1.0, 1.0, 1.0);
+	printMat3(computeCov3D(tRot, tScale), "Simple");
+
 	glm::mat4 viewMat = glm::lookAt(
 		cameraPos,
-		//cameraFront,
+		//cameraFront, 
 		cameraPos + cameraFront,
 		cameraUp
 	);
 
-	printMat4(viewMat);
-	//printMat3(glm::transpose(glm::mat3(viewMat)));
+	glm::mat4 viewMatrix = glm::lookAt(
+		position,
+		target,
+		up
+	);
+
+	std::cout << "View matrix print " << std::endl;
+	printMat4(viewMatrix);
+	std::cout << "View matrix transpose " << std::endl;
+	printMat4(glm::transpose(viewMatrix));
 
 	GaussianData& point = cloud->points[0];
 
 	glm::vec4 center = glm::vec4(point.x, point.y, point.z, 1.0f);
 
-	glm::vec4 cam = viewMat * center;
+	std::cout << "Center " << center.x << ", " << center.y << ", " << center.z << std::endl;
+
+	glm::vec4 cam = viewMatrix * center;
 
 	std::cout << "Cam values " << cam.x << ", " << cam.y << ", " << cam.z << ", " << cam.w << std::endl;
 
@@ -459,7 +553,18 @@ int main()
 
 	glm::vec3 hfov_focal = glm::vec3(htanx, htany, focal_z);
 
+	std::cout << "hfov " << htanx << ", " << htany << ", " << focal_z << std::endl;
+
+	computeCov2d(viewMatrix, cam, hfov_focal);
+
 	sortedIdx = radixSort(cloud, viewMat);
+
+	gausIdx = sortGaussians(cloud, glm::mat3(viewMat));
+
+	for (size_t i = 0; i < 10; ++i) {
+		std::cout << "Sorted idx " << sortedIdx[i] << std::endl;
+		std::cout << "gaus idx " << gausIdx[i] << std::endl;
+	}
 
 	//return 0;
 
@@ -474,10 +579,16 @@ int main()
 	glm::mat4 projMatrix = calculateProjectionMatrix(focal_x, focal_y, SCREEN_WIDTH, SCREEN_HEIGHT);
 
 	newSortedIdx = argsort(origScales, origOpacity);
+	std::cout << "Projection mat " << std::endl;
+	glm::mat4 projectionMat = glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.f);
+	printMat4(projectionMat);
+
+	std::cout << "Projection mat transpose " << std::endl;
+	printMat4(glm::transpose(projectionMat));
 
 	const char* vertexShaderSource = R"(
 		#version 330 core
-		layout (location = 0) in vec3 aPos;
+		layout (location = 0) in vec2 triPosition;
 
 		uniform mat4 view;
 		uniform mat4 projection;
@@ -493,9 +604,9 @@ int main()
 	
 		uniform vec2 widthHeight;
 
-		in vec2 triPosition;
+		//in vec2 triPosition;
 
-		out vec3 fragPos;
+		//out vec3 fragPos;
 		out vec3 outColor;
 		out float opacity;
 		out vec2 vTriPosition;
@@ -508,6 +619,9 @@ int main()
 
 			vec4 cam = view * vec4(center, 1.0);
 			vec4 pos2d = projection * cam;
+
+			pos2d.xyz = pos2d.xyz / pos2d.w;
+			pos2d.w = 1.f;
 
 			vec2 wh = 2 * hfov_focal.xy * hfov_focal.z;
 
@@ -522,9 +636,6 @@ int main()
 
 			float tx = min(limx, max(-limx, txtz)) * cam.z;
 			float ty = min(limy, max(-limy, tytz)) * cam.z; 
-
-			pos2d.xyz = pos2d.xyz / pos2d.w;
-			pos2d.w = 1.f;
 
 			if (any(greaterThan(abs(pos2d.xyz), vec3(1.3)))) {
 				gl_Position = vec4(-100, -100, -100, 1);
@@ -556,6 +667,7 @@ int main()
 			);
 
 			mat3 T = transpose(mat3(view)) * J;
+			//mat3 T = mat3(view) * J;
 	
 			mat3 cov2d = transpose(T) * transpose(Vrk) * T;
 
@@ -571,7 +683,7 @@ int main()
 
 			vec2 quadwh_scr = vec2(3.f * sqrt(cov2d[0][0]), 3.f * sqrt(cov2d[1][1]));
 			vec2 quadwh_ndc = quadwh_scr / wh * 2;
-			pos2d.xy = pos2d.xy + triPosition.xy * quadwh_ndc;
+			pos2d.xy = pos2d.xy + triPosition * quadwh_ndc;
 			coordxy = triPosition * quadwh_scr;
 			gl_Position = pos2d;
 
@@ -605,7 +717,7 @@ int main()
 			//gl_Position = vec4(vCenter + triPosition.x * majorAxis / viewport + triPosition.y * minorAxis / viewport, 0.0, 1.0);
 
 			//gl_Position = projection * view * model * vec4(aPos, 1.0);
-			fragPos = aPos;
+			//fragPos = aPos;
 			outColor = u_Color;
 			//outColor = clamp(pos2d.z / pos2d.w + 1.0, 0.0, 1.0) * vec3(u_Color);
 			//opacity = clamp(pos2d.z / pos2d.w + 1.0, 0.0, 1.0) *  u_Opacity;
@@ -617,7 +729,7 @@ int main()
 
 	const char* fragmentShaderSource = R"(
 		#version 330 core
-		in vec3 fragPos;
+		//in vec3 fragPos;
 		//in vec3 normal;
 		in vec3 outColor;
 		in float opacity;
@@ -647,9 +759,9 @@ int main()
 
 			//vec2 d = -uv;
 			vec2 d = coordxy;
-			float power = -0.5f * (conic.x * d.x * d.x + conic.z * d.y * d.y) + conic.y * d.x * d.y;
-			if(power > 0.0) discard;
-			float alpha = min(0.99, opacity * exp(power));
+			float power = -0.5f * (conic.x * d.x * d.x + conic.z * d.y * d.y) - conic.y * d.x * d.y;
+			if(power > 0.0f) discard;
+			float alpha = min(0.99f, opacity * exp(power));
 			if(alpha < 1.f / 255.f) discard;
 			FragColor = vec4(outColor, alpha);
 		}
@@ -702,7 +814,7 @@ int main()
 	};
 	*/
 	
-	
+	/*
 	GLfloat triangleVertices[] = {
 		-1.0, 1.0,
 		-1.0, 1.0,
@@ -711,14 +823,32 @@ int main()
 		-1.0, 1.0,
 		1.0, -1.0
 	};
-	
-	
+	*/
 
-	Sphere newSphere;
+	GLfloat triangleVertices[] = {
+	-1.0, 1.0,
+	1.0, 1.0,
+	1.0, -1.0,
+	-1.0, 1.0,
+	1.0, -1.0,
+	-1.0, -1.0
+	};
 
-	unsigned int VBO, VAO, EBO, triangleVBO, triangleVAO;
+	GLfloat quad_v[] = {
+		-1.0f, 1.0f,
+		1.0f, 1.0f,
+		1.0f, -1.0f,
+		-1.0f, -1.0f
+	};
+
+	GLuint quad_f[] = {
+		0, 1, 2,
+		0, 2, 3
+	};
+
+	unsigned int VBO, VAO, EBO, triangleVBO, triangleVAO, ibo;
 	//glGenBuffers(1, &EBO);
-
+	/*
 	glGenVertexArrays(1, &VAO);
 	glGenBuffers(1, &VBO);
 	glGenBuffers(1, &EBO);
@@ -740,6 +870,7 @@ int main()
 
 	// Unbind vao for sphere
 	glBindVertexArray(0);
+	*/
 
 	glGenVertexArrays(1, &triangleVAO);
 	glGenBuffers(1, &triangleVBO);
@@ -748,23 +879,30 @@ int main()
 
 	glBindBuffer(GL_ARRAY_BUFFER, triangleVBO);
 
-	glBufferData(GL_ARRAY_BUFFER, sizeof(triangleVertices), triangleVertices, GL_STATIC_DRAW);
+	//glBufferData(GL_ARRAY_BUFFER, sizeof(triangleVertices), triangleVertices, GL_STATIC_DRAW);
+
+	glBufferData(GL_ARRAY_BUFFER, sizeof(quad_v), quad_v, GL_STATIC_DRAW);
 
 	GLint a_position = glGetAttribLocation(shaderProgram, "triPosition");
-	glEnableVertexAttribArray(a_position);
+	//glVertexAttribPointer(a_position, 2, GL_FLOAT, GL_FALSE, 0, (void*)0);
 	glVertexAttribPointer(a_position, 2, GL_FLOAT, GL_FALSE, 0, (void*)0);
+	glEnableVertexAttribArray(a_position);
 
+	glGenBuffers(1, &ibo);
+	glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ibo);
+	glBufferData(GL_ELEMENT_ARRAY_BUFFER, sizeof(quad_f), quad_f, GL_STATIC_DRAW);
 
-	//glBindVertexArray(0);
+	GLsizei numIndices = sizeof(quad_f) / sizeof(quad_f[0]);
 
 	// Unbind the VBO and VAO
 	glBindVertexArray(0);
-	glBindBuffer(GL_ARRAY_BUFFER, 0);
+	//glBindBuffer(GL_ARRAY_BUFFER, 0);
 
 	//glDisable(GL_DEPTH_TEST);
 
-	glDisable(GL_CULL_FACE);
 	glEnable(GL_BLEND);
+	glDisable(GL_CULL_FACE);
+	glDisable(GL_DEPTH_TEST);
 	glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 
 	/*
@@ -792,17 +930,20 @@ int main()
 
 		glClearColor(0.2f, 0.3f, 0.3f, 1.0f);
 		//glClearColor(1.0f, 1.0f, 1.0f, 1.0f);
-		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+		glClear(GL_COLOR_BUFFER_BIT);
 
 		glm::mat4 view = glm::mat4(1.0f);
 		glm::mat4 projection = glm::mat4(1.0f);
 
-		projection = glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.f);
+		projection = glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.01f, 100.f);
+		//projection = glm::transpose(glm::perspective(glm::radians(fov), (float)SCREEN_WIDTH / (float)SCREEN_HEIGHT, 0.1f, 100.f));
 		unsigned int projLoc = glGetUniformLocation(shaderProgram, "projection");
 		glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projection));
 		//glUniformMatrix4fv(projLoc, 1, GL_FALSE, glm::value_ptr(projMatrix));
 
-		view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+		//view = glm::transpose(glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp));
+		//view = glm::lookAt(cameraPos, cameraPos + cameraFront, cameraUp);
+		view = glm::lookAt(position, target, up);
 
 		unsigned int viewLoc = glGetUniformLocation(shaderProgram, "view");
 		glUniformMatrix4fv(viewLoc, 1, GL_FALSE, glm::value_ptr(view));
@@ -813,14 +954,16 @@ int main()
 		glUniform3f(glGetUniformLocation(shaderProgram, "hfov_focal"), hfov_focal.x, hfov_focal.y, hfov_focal.z);
 
 		for (int i = 0; i < numInstancesCount; ++i) {
-			const auto& point = cloud->points[sortedIdx[i]];
+			//const auto& point = cloud->points[sortedIdx[i]];
+			const auto& point = cloud->points[gausIdx[i]];
 			//const auto& point = cloud->points[newSortedIdx[i]];
 
 			glUniform2f(glGetUniformLocation(shaderProgram, "viewport"), SCREEN_WIDTH, SCREEN_HEIGHT);
 
 			glUniform3f(glGetUniformLocation(shaderProgram, "center"), point.x, point.y, point.z);
 
-			glUniformMatrix3fv(glGetUniformLocation(shaderProgram, "Vrk"), 1, GL_FALSE, glm::value_ptr(Vrks[sortedIdx[i]]));
+			//glUniformMatrix3fv(glGetUniformLocation(shaderProgram, "Vrk"), 1, GL_FALSE, glm::value_ptr(Vrks[sortedIdx[i]]));
+			glUniformMatrix3fv(glGetUniformLocation(shaderProgram, "Vrk"), 1, GL_FALSE, glm::value_ptr(Vrks[gausIdx[i]]));
 			//glUniformMatrix3fv(glGetUniformLocation(shaderProgram, "Vrk"), 1, GL_FALSE, glm::value_ptr(Vrks[newSortedIdx[i]]));
 
 			glm::vec3 colors = SH2RGB(glm::vec3(point.f_dc_0, point.f_dc_1, point.f_dc_2));
@@ -832,7 +975,9 @@ int main()
 
 			glBindVertexArray(triangleVAO);
 			//glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-			glDrawArrays(GL_TRIANGLES, 0, 6);
+			//glDrawArrays(GL_TRIANGLES, 0, 6);
+			//glDrawElementsInstanced(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (void*)0, 14598);
+			glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, (void*)0);
 			glBindVertexArray(0);
 		};
 		/*
@@ -878,11 +1023,12 @@ void processInput(GLFWwindow* window, auto& cloud) {
 		cameraPos += glm::normalize(glm::cross(cameraFront, cameraUp)) *
 		cameraSpeed;
 	if (glfwGetKey(window, GLFW_KEY_P) == GLFW_PRESS) {
-		/*glm::mat4 viewMat = glm::lookAt(
+		glm::mat4 viewMat = glm::lookAt(
 			cameraPos,
-			cameraFront,
+			cameraPos + cameraFront,
 			cameraUp
 		);
+		/*
 		std::vector<size_t> sortedIdx = radixSort(cloud, viewMat);
 
 		std::cout << "Sorted idx 0: " << sortedIdx[0] << std::endl;
@@ -896,8 +1042,8 @@ void processInput(GLFWwindow* window, auto& cloud) {
 		std::cout << "Camera Front " << cameraFront.x << ", " << cameraFront.y << ", " << cameraFront.z << std::endl;
 		std::cout << "Camera up" << cameraUp.x << ", " << cameraUp.y << ", " << cameraUp.z << std::endl;
 		
-
-		performSorting(sortedIdx, cloud);
+		gausIdx = sortGaussians(cloud, glm::mat3(viewMat));
+		//performSorting(sortedIdx, cloud);
 		//newSortedIdx = argsort(expScales, origOpacity);
 	}
 }
